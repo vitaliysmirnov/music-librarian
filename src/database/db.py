@@ -214,8 +214,11 @@ class Database:
         params: list = []
         # Split into words so "david bowie pinups" matches artist + title together
         for word in search.split():
-            query += " AND (a.artist LIKE ? OR a.title LIKE ? OR a.year_recorded LIKE ?)"
-            params += [f"%{word}%", f"%{word}%", f"%{word}%"]
+            query += (
+                " AND (a.artist LIKE ? OR a.title LIKE ? OR a.year_recorded LIKE ?"
+                " OR a.year_released LIKE ? OR a.catalog_number LIKE ? OR a.media LIKE ?)"
+            )
+            params += [f"%{word}%"] * 6
         query += " ORDER BY a.artist, a.year_recorded, a.title"
         with self.conn() as c:
             return c.execute(query, params).fetchall()

@@ -48,7 +48,7 @@ exe = EXE(
     upx=True,
     console=False,          # no terminal window
     disable_windowed_traceback=False,
-    # icon="assets/icon.icns" if IS_MAC else "assets/icon.ico",  # uncomment when icon is ready
+    icon="assets/icon.icns" if IS_MAC else "assets/icon.ico",
 )
 
 coll = COLLECT(
@@ -65,7 +65,7 @@ if IS_MAC:
     app = BUNDLE(
         coll,
         name=f"{APP_NAME}.app",
-        # icon="assets/icon.icns",  # uncomment when icon is ready
+        icon="assets/icon.icns",
         bundle_identifier="com.music-librarian.app",
         info_plist={
             "CFBundleShortVersionString": "1.0.0",

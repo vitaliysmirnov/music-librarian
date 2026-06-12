@@ -1,6 +1,16 @@
 import sys
 from pathlib import Path
 
+# Fix app name in the macOS menu bar when running from source (not a bundle).
+# In a PyInstaller bundle the name comes from CFBundleName in Info.plist.
+if sys.platform == "darwin":
+    try:
+        from AppKit import NSBundle  # pyobjc-framework-Cocoa
+        NSBundle.mainBundle().infoDictionary()["CFBundleName"] = "Music Librarian"
+    except Exception:
+        pass
+
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 DATA_DIR = Path.home() / ".music-librarian"
@@ -16,7 +26,12 @@ from src.ui.main_window import MainWindow
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Music Librarian")
+    app.setApplicationDisplayName("Music Librarian")
     app.setOrganizationName("music-librarian")
+
+    icon_path = Path(__file__).parent / "assets" / "icon.png"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
 
     from src.utils.logger import get_logger, QtLogHandler
     log = get_logger()

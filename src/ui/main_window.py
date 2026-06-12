@@ -1,8 +1,9 @@
+import platform
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
-from PySide6.QtGui import QIcon, QAction
+from PySide6.QtCore import QTimer, QEvent
+from PySide6.QtGui import QIcon, QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar,
     QLabel, QPushButton,
@@ -21,6 +22,23 @@ from src.watcher.watcher import LibraryWatcher
 log = get_logger()
 
 _DRIVE_POLL_INTERVAL_MS = 20_000
+
+
+def _set_dock_visible(visible: bool) -> None:
+    """Show or hide the macOS Dock icon. No-op on other platforms."""
+    if platform.system() != "Darwin":
+        return
+    try:
+        from AppKit import (
+            NSApp,
+            NSApplicationActivationPolicyRegular,
+            NSApplicationActivationPolicyAccessory,
+        )
+        policy = (NSApplicationActivationPolicyRegular if visible
+                  else NSApplicationActivationPolicyAccessory)
+        NSApp.setActivationPolicy_(policy)
+    except Exception:
+        pass
 
 
 class MainWindow(QMainWindow):
@@ -43,6 +61,7 @@ class MainWindow(QMainWindow):
         )
 
         self._setup_ui()
+        self._setup_menu()
         self._setup_tray()
         self._apply_settings()
         self._check_drives()
@@ -85,9 +104,53 @@ class MainWindow(QMainWindow):
 
         self._refresh_all()
 
+    def _setup_menu(self):
+        """Native macOS menu bar with proper roles (About, Preferences, Quit).
+        On other platforms these appear as a regular menu."""
+        mb = self.menuBar()
+        app_menu = mb.addMenu("Music Librarian")
+
+        about_act = QAction("About Music Librarian", self)
+        about_act.setMenuRole(QAction.MenuRole.AboutRole)
+        about_act.triggered.connect(self._show_about)
+        app_menu.addAction(about_act)
+
+        app_menu.addSeparator()
+
+        prefs_act = QAction("Preferences…", self)
+        prefs_act.setMenuRole(QAction.MenuRole.PreferencesRole)
+        prefs_act.setShortcut(QKeySequence("Ctrl+,"))
+        prefs_act.triggered.connect(self._open_settings)
+        app_menu.addAction(prefs_act)
+
+        app_menu.addSeparator()
+
+        quit_act = QAction("Quit Music Librarian", self)
+        quit_act.setMenuRole(QAction.MenuRole.QuitRole)
+        quit_act.setShortcut(QKeySequence.StandardKey.Quit)   # Cmd+Q / Ctrl+Q
+        quit_act.triggered.connect(self.quit)
+        app_menu.addAction(quit_act)
+
+    def _show_about(self):
+        QMessageBox.about(
+            self,
+            "About Music Librarian",
+            "<b>Music Librarian</b><br><br>"
+            "A personal music collection manager.<br>"
+            "Scans folders, tracks releases, monitors changes.",
+        )
+
+    def _open_settings(self):
+        self._show_window()
+        self._tabs.setCurrentWidget(self._settings_tab)
+
     def _setup_tray(self):
         self._tray = QSystemTrayIcon(self)
-        self._tray.setIcon(QIcon.fromTheme("audio-x-generic", self.windowIcon()))
+        _tray_icon_path = Path(__file__).parent.parent.parent / "assets" / "tray.png"
+        if _tray_icon_path.exists():
+            self._tray.setIcon(QIcon(str(_tray_icon_path)))
+        else:
+            self._tray.setIcon(QIcon.fromTheme("audio-x-generic", self.windowIcon()))
         self._tray.setToolTip("Music Librarian")
 
         menu = QMenu()
@@ -269,24 +332,47 @@ class MainWindow(QMainWindow):
 
     # ── Tray / window ─────────────────────────────────────────────────────
 
-    def _show_window(self):
-        self.showNormal()
-        self.activateWindow()
-        self.raise_()
 
     def _on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.DoubleClick:
+        # Single click or double click both show the window
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger,
+                      QSystemTrayIcon.ActivationReason.DoubleClick):
             self._show_window()
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.WindowStateChange and self.isMinimized():
+            event.ignore()
+            QTimer.singleShot(0, self._hide_to_tray)
+            return
+        super().changeEvent(event)
 
     def closeEvent(self, event):
         event.ignore()
+        self._hide_to_tray()
+
+    def _hide_to_tray(self):
         self.hide()
-        self._tray.showMessage(
-            "Music Librarian",
-            "Music Librarian is running in the tray. Use the icon menu to quit.",
-            QSystemTrayIcon.Information,
-            3000,
-        )
+        _set_dock_visible(False)
+        if not self._db.get_setting("tray_hint_shown"):
+            self._tray.showMessage(
+                "Music Librarian",
+                "Running in the menu bar. Use the icon to show or quit.",
+                QSystemTrayIcon.MessageIcon.Information,
+                3000,
+            )
+            self._db.set_setting("tray_hint_shown", "1")
+
+    def _show_window(self):
+        _set_dock_visible(True)
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
+        if platform.system() == "Darwin":
+            try:
+                from AppKit import NSApp
+                NSApp.activateIgnoringOtherApps_(True)
+            except Exception:
+                pass
 
     def quit(self):
         self._check_drives()

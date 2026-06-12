@@ -2,7 +2,7 @@ from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtGui import QTextCharFormat, QColor, QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox,
-    QRadioButton, QSpinBox, QHBoxLayout, QLabel,
+    QRadioButton, QHBoxLayout, QLabel,
     QButtonGroup, QGraphicsOpacityEffect, QPlainTextEdit, QPushButton,
     QLineEdit,
 )
@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
 from src.database.db import Database
 from src.scanner.mask import DEFAULT_MASK, validate_mask, mask_to_regex, parse_with_mask
 from src.utils.logger import QtLogHandler, get_logger  # noqa: F401 (QtLogHandler used in type hints)
+
+log = get_logger()
 
 MODE_MANUAL = "manual"
 MODE_AUTO = "auto"
@@ -112,12 +114,18 @@ class SettingsTab(QWidget):
         interval_row = QHBoxLayout()
         interval_row.setContentsMargins(20, 0, 0, 0)
         self._interval_label = QLabel("Full scan interval:")
-        self._interval_spin = QSpinBox()
-        self._interval_spin.setRange(5, 1440)
-        self._interval_spin.setSuffix(" min")
-        self._interval_spin.setFixedWidth(90)
+        self._interval_edit = QLineEdit()
+        self._interval_edit.setFixedWidth(60)
+        self._interval_edit.setPlaceholderText("60")
         interval_row.addWidget(self._interval_label)
-        interval_row.addWidget(self._interval_spin)
+        interval_row.addWidget(self._interval_edit)
+        interval_row.addWidget(QLabel("min"))
+        self._interval_saved_label = QLabel("")
+        self._interval_saved_label.setStyleSheet("color: #4caf50; font-size: 11px;")
+        self._interval_saved_timer = QTimer(self)
+        self._interval_saved_timer.setSingleShot(True)
+        self._interval_saved_timer.timeout.connect(lambda: self._interval_saved_label.setText(""))
+        interval_row.addWidget(self._interval_saved_label)
         interval_row.addStretch()
         mode_layout.addLayout(interval_row)
 
@@ -157,7 +165,7 @@ class SettingsTab(QWidget):
 
         self._manual_rb.toggled.connect(self._on_change)
         self._auto_rb.toggled.connect(self._on_change)
-        self._interval_spin.valueChanged.connect(self._on_interval_changed)
+        self._interval_edit.returnPressed.connect(self._on_interval_changed)
 
     def _setup_log_handler(self, handler: QtLogHandler | None):
         if handler is None:
@@ -184,14 +192,20 @@ class SettingsTab(QWidget):
     # ── Settings ──────────────────────────────────────────────────────────
 
     def _on_change(self):
-        auto = self._auto_rb.isChecked()
-        self._interval_label.setEnabled(auto)
-        self._interval_spin.setEnabled(auto)
         self._save()
 
     def _on_interval_changed(self):
-        self._db.set_setting("scan_interval_min", str(self._interval_spin.value()))
+        try:
+            value = max(1, int(self._interval_edit.text().strip()))
+        except ValueError:
+            return
+        self._interval_edit.setText(str(value))
+        self._db.set_setting("scan_interval_min", str(value))
         self.settings_changed.emit()
+        self._interval_edit.clearFocus()
+        self._interval_saved_label.setText("Saved")
+        self._interval_saved_timer.start(2000)
+        log.info("Settings: full scan interval set to %d min", value)
 
     def _validate_and_preview(self):
         mask = self._mask_edit.text().strip() or DEFAULT_MASK
@@ -237,7 +251,7 @@ class SettingsTab(QWidget):
         self.mask_changed.emit()
 
     def _load(self):
-        for w in (self._manual_rb, self._auto_rb, self._interval_spin):
+        for w in (self._manual_rb, self._auto_rb):
             w.blockSignals(True)
 
         mode = self._db.get_setting("scan_mode", MODE_MANUAL)
@@ -246,14 +260,10 @@ class SettingsTab(QWidget):
         else:
             self._manual_rb.setChecked(True)
 
-        self._interval_spin.setValue(int(self._db.get_setting("scan_interval_min", "60")))
-
-        for w in (self._manual_rb, self._auto_rb, self._interval_spin):
+        for w in (self._manual_rb, self._auto_rb):
             w.blockSignals(False)
 
-        auto = self._auto_rb.isChecked()
-        self._interval_label.setEnabled(auto)
-        self._interval_spin.setEnabled(auto)
+        self._interval_edit.setText(self._db.get_setting("scan_interval_min", "60"))
 
         saved_mask = self._db.get_setting("folder_mask", DEFAULT_MASK)
         self._mask_edit.blockSignals(True)
@@ -264,7 +274,6 @@ class SettingsTab(QWidget):
     def _save(self):
         mode = MODE_AUTO if self._auto_rb.isChecked() else MODE_MANUAL
         self._db.set_setting("scan_mode", mode)
-        self._db.set_setting("scan_interval_min", str(self._interval_spin.value()))
         self.settings_changed.emit()
 
     @property
@@ -273,7 +282,10 @@ class SettingsTab(QWidget):
 
     @property
     def scan_interval_min(self) -> int:
-        return self._interval_spin.value()
+        try:
+            return max(1, int(self._interval_edit.text().strip()))
+        except ValueError:
+            return 60
 
 
 def _hint(text: str) -> QLabel:

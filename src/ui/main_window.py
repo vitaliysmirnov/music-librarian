@@ -2,8 +2,8 @@ import platform
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, QEvent
-from PySide6.QtGui import QIcon, QAction, QKeySequence
+from PySide6.QtCore import Qt, QTimer, QEvent
+from PySide6.QtGui import QIcon, QAction, QKeySequence, QPixmap, QPainter, QColor, QPen, QBrush
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar,
     QLabel, QPushButton,
@@ -144,24 +144,38 @@ class MainWindow(QMainWindow):
         self._show_window()
         self._tabs.setCurrentWidget(self._settings_tab)
 
+    @staticmethod
+    def _make_tray_icon() -> QIcon:
+        """Draw a music-note icon using Qt — no external file needed."""
+        pix = QPixmap(22, 22)
+        pix.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Use black; macOS renders it correctly on both light and dark menu bars.
+        color = QColor(0, 0, 0)
+        p.setBrush(QBrush(color))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(2, 13, 9, 7)          # note head (filled oval)
+        p.setPen(QPen(color, 2))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawLine(11, 17, 11, 3)           # stem
+        p.drawLine(11, 3, 19, 7)            # beam / flag
+        p.end()
+        return QIcon(pix)
+
     def _setup_tray(self):
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            log.warning("System tray not available on this platform")
         self._tray = QSystemTrayIcon(self)
-        _tray_icon_path = Path(__file__).parent.parent.parent / "assets" / "tray.png"
-        if _tray_icon_path.exists():
-            self._tray.setIcon(QIcon(str(_tray_icon_path)))
-        else:
-            self._tray.setIcon(QIcon.fromTheme("audio-x-generic", self.windowIcon()))
+        self._tray.setIcon(self._make_tray_icon())
         self._tray.setToolTip("Music Librarian")
 
         menu = QMenu()
-        show_action = QAction("Show", self)
-        show_action.triggered.connect(self._show_window)
         scan_action = QAction("Scan Now", self)
         scan_action.triggered.connect(self._manual_scan)
         quit_action = QAction("Quit", self)
         quit_action.triggered.connect(self.quit)
 
-        menu.addAction(show_action)
         menu.addAction(scan_action)
         menu.addSeparator()
         menu.addAction(quit_action)
@@ -340,11 +354,19 @@ class MainWindow(QMainWindow):
             self._show_window()
 
     def changeEvent(self, event):
-        if event.type() == QEvent.Type.WindowStateChange and self.isMinimized():
-            event.ignore()
-            QTimer.singleShot(0, self._hide_to_tray)
-            return
+        if event.type() == QEvent.Type.WindowStateChange:
+            if self.isMinimized():
+                # Intercept minimize: hide to tray instead of going to Dock.
+                QTimer.singleShot(0, self._intercept_minimize)
+            elif event.oldState() & Qt.WindowState.WindowMinimized:
+                # Restoring from minimized (e.g. Dock click after broken hide):
+                # let _show_window handle proper activation.
+                QTimer.singleShot(0, self._show_window)
         super().changeEvent(event)
+
+    def _intercept_minimize(self):
+        # Don't touch window state — just hide. showNormal() restores correctly on un-hide.
+        self._hide_to_tray()
 
     def closeEvent(self, event):
         event.ignore()
@@ -352,7 +374,6 @@ class MainWindow(QMainWindow):
 
     def _hide_to_tray(self):
         self.hide()
-        _set_dock_visible(False)
         if not self._db.get_setting("tray_hint_shown"):
             self._tray.showMessage(
                 "Music Librarian",
@@ -363,7 +384,6 @@ class MainWindow(QMainWindow):
             self._db.set_setting("tray_hint_shown", "1")
 
     def _show_window(self):
-        _set_dock_visible(True)
         self.showNormal()
         self.activateWindow()
         self.raise_()

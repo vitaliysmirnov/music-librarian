@@ -10,8 +10,24 @@ if sys.platform == "darwin":
     except Exception:
         pass
 
+from PySide6.QtCore import QEvent
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
+
+
+class _App(QApplication):
+    """QApplication subclass that forwards macOS Dock re-open clicks."""
+
+    def event(self, e: QEvent) -> bool:
+        if e.type() == QEvent.Type.ApplicationActivate:
+            # Emitted on macOS when the user clicks the Dock icon while no
+            # window is visible (applicationShouldHandleReopen).
+            for widget in self.topLevelWidgets():
+                from src.ui.main_window import MainWindow
+                if isinstance(widget, MainWindow):
+                    widget._show_window()
+                    break
+        return super().event(e)
 
 DATA_DIR = Path.home() / ".music-librarian"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -24,7 +40,7 @@ from src.ui.main_window import MainWindow
 
 
 def main():
-    app = QApplication(sys.argv)
+    app = _App(sys.argv)
     app.setApplicationName("Music Librarian")
     app.setApplicationDisplayName("Music Librarian")
     app.setOrganizationName("music-librarian")

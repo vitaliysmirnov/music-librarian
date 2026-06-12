@@ -6,7 +6,7 @@ from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar,
     QLabel, QPushButton,
-    QSystemTrayIcon, QMenu, QApplication,
+    QSystemTrayIcon, QMenu, QApplication, QMessageBox,
 )
 
 from src.database.db import Database
@@ -68,6 +68,7 @@ class MainWindow(QMainWindow):
 
         self._sources_tab.sources_changed.connect(self._on_sources_changed)
         self._settings_tab.settings_changed.connect(self._apply_settings)
+        self._settings_tab.mask_changed.connect(self._on_mask_changed)
 
         sb = QStatusBar()
         self.setStatusBar(sb)
@@ -215,6 +216,25 @@ class MainWindow(QMainWindow):
     def _auto_scan(self):
         log.info("Auto-scan triggered")
         self._manual_scan()
+
+    def _on_mask_changed(self):
+        count = self._db.count_releases()
+        if count > 0:
+            answer = QMessageBox.question(
+                self,
+                "Apply new mask",
+                f"The library contains {count} release(s) indexed with the previous mask.\n"
+                "They will be removed and the library will be re-scanned.\n\nContinue?",
+                QMessageBox.Yes | QMessageBox.Cancel,
+            )
+            if answer != QMessageBox.Yes:
+                return
+        log.info("Mask changed — clearing releases and re-scanning")
+        self._releases_tab.invalidate_header_state()
+        self._db.clear_releases()
+        self._stop_watcher()
+        self._manual_scan()
+        self._apply_settings()  # restart watcher with new pattern if auto mode
 
     # ── Refresh ───────────────────────────────────────────────────────────
 

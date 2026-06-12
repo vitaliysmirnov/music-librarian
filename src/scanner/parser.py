@@ -1,19 +1,9 @@
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-# Pattern: Artist - YearRecorded - Title [Catalog] [Media] (YearReleased)
-# Brackets and parens are optional. Multiple bracket groups handled greedily.
-_PATTERN = re.compile(
-    r"^(?P<artist>.+?)"
-    r"\s*-\s*"
-    r"(?P<year_recorded>\d{4})"
-    r"\s*-\s*"
-    r"(?P<title>.+?)"
-    r"(?:\s*\[(?P<catalog>[^\]]+)\])?"
-    r"(?:\s*\[(?P<media>[^\]]+)\])?"
-    r"(?:\s*\((?P<year_released>\d{4})\))?"
-    r"\s*$"
-)
+from src.scanner.mask import mask_to_regex, DEFAULT_MASK, parse_with_mask, KNOWN_TOKENS
+
+_DEFAULT_PATTERN: re.Pattern = mask_to_regex(DEFAULT_MASK)
 
 
 @dataclass
@@ -24,17 +14,25 @@ class ParsedRelease:
     catalog_number: str | None
     media: str | None
     year_released: str | None
+    extras: dict = field(default_factory=dict)
 
 
-def parse_folder_name(name: str) -> ParsedRelease | None:
-    m = _PATTERN.match(name.strip())
-    if not m:
+def parse_folder_name(name: str, pattern: re.Pattern | None = None) -> ParsedRelease | None:
+    groups = parse_with_mask(name, pattern or _DEFAULT_PATTERN)
+    if not groups:
         return None
+    artist = groups.get("artist", "").strip()
+    year_recorded = groups.get("year_recorded", "")
+    title = groups.get("title", "").strip()
+    if not (artist and year_recorded and title):
+        return None
+    extras = {k: v for k, v in groups.items() if k not in KNOWN_TOKENS}
     return ParsedRelease(
-        artist=m.group("artist").strip(),
-        year_recorded=m.group("year_recorded"),
-        title=m.group("title").strip(),
-        catalog_number=m.group("catalog"),
-        media=m.group("media"),
-        year_released=m.group("year_released"),
+        artist=artist,
+        year_recorded=year_recorded,
+        title=title,
+        catalog_number=groups.get("catalog_number"),
+        media=groups.get("media"),
+        year_released=groups.get("year_released"),
+        extras=extras,
     )

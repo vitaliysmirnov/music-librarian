@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -61,6 +62,21 @@ class Database:
     def _init(self):
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self):
+        with self.conn() as c:
+            # Add extras column for custom mask tokens if not present
+            cols = [r[1] for r in c.execute("PRAGMA table_info(releases)").fetchall()]
+            if "extras" not in cols:
+                c.execute("ALTER TABLE releases ADD COLUMN extras TEXT DEFAULT '{}'")
+
+            # Remove {country} that was mistakenly shipped as part of the default mask
+            old = "{artist} - {year_recorded} - {title} [{catalog_number}] [{media}] ({year_released}) {country}"
+            new = "{artist} - {year_recorded} - {title} [{catalog_number}] [{media}] ({year_released})"
+            row = c.execute("SELECT value FROM settings WHERE key='folder_mask'").fetchone()
+            if row and row["value"] == old:
+                c.execute("UPDATE settings SET value=? WHERE key='folder_mask'", (new,))
 
     @contextmanager
     def conn(self) -> Iterator[sqlite3.Connection]:
@@ -142,16 +158,18 @@ class Database:
         media: str | None,
         year_released: str | None,
         folder_path: str,
+        extras: dict | None = None,
     ):
         now = datetime.now().isoformat(timespec="seconds")
+        extras_json = json.dumps(extras or {}, ensure_ascii=False)
         with self.conn() as c:
             c.execute(
                 """
                 INSERT INTO releases
                     (source_id, artist, year_recorded, title, catalog_number,
                      media, year_released, folder_path, last_seen_path,
-                     is_available, modified_at)
-                VALUES (?,?,?,?,?,?,?,?,?,1,?)
+                     is_available, modified_at, extras)
+                VALUES (?,?,?,?,?,?,?,?,?,1,?,?)
                 ON CONFLICT(folder_path) DO UPDATE SET
                     artist=excluded.artist,
                     year_recorded=excluded.year_recorded,
@@ -161,12 +179,13 @@ class Database:
                     year_released=excluded.year_released,
                     last_seen_path=excluded.last_seen_path,
                     is_available=1,
-                    modified_at=excluded.modified_at
+                    modified_at=excluded.modified_at,
+                    extras=excluded.extras
                 """,
                 (
                     source_id, artist, year_recorded, title,
                     catalog_number, media, year_released,
-                    folder_path, folder_path, now,
+                    folder_path, folder_path, now, extras_json,
                 ),
             )
 
@@ -216,9 +235,10 @@ class Database:
         for word in search.split():
             query += (
                 " AND (a.artist LIKE ? OR a.title LIKE ? OR a.year_recorded LIKE ?"
-                " OR a.year_released LIKE ? OR a.catalog_number LIKE ? OR a.media LIKE ?)"
+                " OR a.year_released LIKE ? OR a.catalog_number LIKE ? OR a.media LIKE ?"
+                " OR a.extras LIKE ?)"
             )
-            params += [f"%{word}%"] * 6
+            params += [f"%{word}%"] * 7
         query += " ORDER BY a.artist, a.year_recorded, a.title"
         with self.conn() as c:
             return c.execute(query, params).fetchall()
@@ -239,3 +259,7 @@ class Database:
     def count_releases(self) -> int:
         with self.conn() as c:
             return c.execute("SELECT COUNT(*) FROM releases").fetchone()[0]
+
+    def clear_releases(self):
+        with self.conn() as c:
+            c.execute("DELETE FROM releases")

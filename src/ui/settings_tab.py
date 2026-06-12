@@ -1,12 +1,14 @@
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtGui import QTextCharFormat, QColor, QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox,
     QRadioButton, QSpinBox, QHBoxLayout, QLabel,
     QButtonGroup, QGraphicsOpacityEffect, QPlainTextEdit, QPushButton,
+    QLineEdit,
 )
 
 from src.database.db import Database
+from src.scanner.mask import DEFAULT_MASK, validate_mask, mask_to_regex, parse_with_mask
 from src.utils.logger import QtLogHandler, get_logger  # noqa: F401 (QtLogHandler used in type hints)
 
 MODE_MANUAL = "manual"
@@ -25,6 +27,7 @@ _MAX_LOG_LINES = 500
 
 class SettingsTab(QWidget):
     settings_changed = Signal()
+    mask_changed = Signal()  # emitted when user applies a new mask
 
     def __init__(self, db: Database, qt_log_handler: QtLogHandler | None = None):
         super().__init__()
@@ -37,6 +40,49 @@ class SettingsTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
+
+        # ── Folder name mask ──────────────────────────────────────────────
+        mask_box = QGroupBox("Folder Name Mask")
+        mask_layout = QVBoxLayout(mask_box)
+        mask_layout.setContentsMargins(12, 8, 12, 12)
+        mask_layout.setSpacing(6)
+
+        mask_layout.addWidget(_hint(
+            "Required tokens: {artist}  {year_recorded}  {title}   "
+            "Optional (standard): [{catalog_number}]  [{media}]  ({year_released})   "
+            "Custom tokens: bare {token} matches one word; wrap in [] or () for multi-word values."
+        ))
+
+        input_row = QHBoxLayout()
+        self._mask_edit = QLineEdit()
+        self._mask_edit.setPlaceholderText(DEFAULT_MASK)
+        self._mask_reset_btn = QPushButton("Reset")
+        self._mask_reset_btn.setFixedWidth(55)
+        input_row.addWidget(self._mask_edit)
+        input_row.addWidget(self._mask_reset_btn)
+        mask_layout.addLayout(input_row)
+
+        self._mask_valid_label = QLabel("")
+        mask_layout.addWidget(self._mask_valid_label)
+
+        preview_row = QHBoxLayout()
+        preview_lbl = QLabel("Preview:")
+        preview_lbl.setFixedWidth(55)
+        self._mask_preview_input = QLineEdit()
+        self._mask_preview_input.setPlaceholderText("Type a folder name to test the mask…")
+        preview_row.addWidget(preview_lbl)
+        preview_row.addWidget(self._mask_preview_input)
+        mask_layout.addLayout(preview_row)
+
+        self._mask_preview_result = QLabel("")
+        self._mask_preview_result.setWordWrap(True)
+        mask_layout.addWidget(self._mask_preview_result)
+
+        self._mask_apply_btn = QPushButton("Apply Mask")
+        self._mask_apply_btn.setEnabled(False)
+        mask_layout.addWidget(self._mask_apply_btn, alignment=Qt.AlignRight)
+
+        layout.addWidget(mask_box)
 
         # ── Monitoring ────────────────────────────────────────────────────
         mode_box = QGroupBox("Change Monitoring")
@@ -99,6 +145,16 @@ class SettingsTab(QWidget):
 
         layout.addWidget(log_box)
 
+        self._mask_timer = QTimer(self)
+        self._mask_timer.setSingleShot(True)
+        self._mask_timer.setInterval(300)
+        self._mask_timer.timeout.connect(self._validate_and_preview)
+
+        self._mask_edit.textChanged.connect(self._mask_timer.start)
+        self._mask_preview_input.textChanged.connect(self._update_mask_preview)
+        self._mask_reset_btn.clicked.connect(self._reset_mask)
+        self._mask_apply_btn.clicked.connect(self._apply_mask)
+
         self._manual_rb.toggled.connect(self._on_change)
         self._auto_rb.toggled.connect(self._on_change)
         self._interval_spin.valueChanged.connect(self._on_interval_changed)
@@ -137,6 +193,49 @@ class SettingsTab(QWidget):
         self._db.set_setting("scan_interval_min", str(self._interval_spin.value()))
         self.settings_changed.emit()
 
+    def _validate_and_preview(self):
+        mask = self._mask_edit.text().strip() or DEFAULT_MASK
+        saved = self._db.get_setting("folder_mask", DEFAULT_MASK)
+        error = validate_mask(mask)
+        if error:
+            self._mask_valid_label.setText(f'<span style="color:#e05555">{error}</span>')
+            self._mask_apply_btn.setEnabled(False)
+        else:
+            self._mask_valid_label.setText("")
+            self._mask_apply_btn.setEnabled(mask != saved)
+        self._update_mask_preview()
+
+    def _update_mask_preview(self):
+        folder_name = self._mask_preview_input.text().strip()
+        if not folder_name:
+            self._mask_preview_result.setText("")
+            return
+        mask = self._mask_edit.text().strip() or DEFAULT_MASK
+        if validate_mask(mask):
+            self._mask_preview_result.setText("")
+            return
+        try:
+            pattern = mask_to_regex(mask)
+            groups = parse_with_mask(folder_name, pattern)
+        except Exception:
+            groups = None
+        if groups:
+            parts = [f"<b>{k}</b>: {v}" for k, v in groups.items()]
+            self._mask_preview_result.setText("  |  ".join(parts))
+        else:
+            self._mask_preview_result.setText(
+                '<span style="color:#e5a450">No match</span>'
+            )
+
+    def _reset_mask(self):
+        self._mask_edit.setText(DEFAULT_MASK)
+
+    def _apply_mask(self):
+        mask = self._mask_edit.text().strip() or DEFAULT_MASK
+        self._db.set_setting("folder_mask", mask)
+        self._mask_apply_btn.setEnabled(False)
+        self.mask_changed.emit()
+
     def _load(self):
         for w in (self._manual_rb, self._auto_rb, self._interval_spin):
             w.blockSignals(True)
@@ -155,6 +254,12 @@ class SettingsTab(QWidget):
         auto = self._auto_rb.isChecked()
         self._interval_label.setEnabled(auto)
         self._interval_spin.setEnabled(auto)
+
+        saved_mask = self._db.get_setting("folder_mask", DEFAULT_MASK)
+        self._mask_edit.blockSignals(True)
+        self._mask_edit.setText(saved_mask)
+        self._mask_edit.blockSignals(False)
+        self._mask_apply_btn.setEnabled(False)
 
     def _save(self):
         mode = MODE_AUTO if self._auto_rb.isChecked() else MODE_MANUAL

@@ -64,7 +64,7 @@ def make_dmg():
             str(dmg_path),
         ])
 
-    print(f"\n✓ {dmg_path.name}  ({dmg_path.stat().st_size / 1024 / 1024:.1f} MB)")
+    print(f"\nOK {dmg_path.name}  ({dmg_path.stat().st_size / 1024 / 1024:.1f} MB)")
 
 
 def make_zip():
@@ -78,7 +78,7 @@ def make_zip():
     shutil.make_archive(str(zip_base), "zip", root_dir=DIST, base_dir=APP_NAME)
 
     final = Path(str(zip_base) + ".zip")
-    print(f"\n✓ {final.name}  ({final.stat().st_size / 1024 / 1024:.1f} MB)")
+    print(f"\nOK {final.name}  ({final.stat().st_size / 1024 / 1024:.1f} MB)")
 
 
 def main():

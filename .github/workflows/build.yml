@@ -20,9 +20,9 @@ jobs:
     name: Build (${{ matrix.name }})
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: "3.12"
           cache: pip
@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload macOS DMG
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: Music-Librarian-macOS
           path: dist/*.dmg
@@ -51,7 +51,7 @@ jobs:
 
       - name: Upload Windows ZIP
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: Music-Librarian-Windows
           path: dist/*.zip
@@ -65,7 +65,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4.3.0
         with:
           path: artifacts
 

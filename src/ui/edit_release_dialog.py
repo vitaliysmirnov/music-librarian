@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -6,20 +7,34 @@ from PySide6.QtWidgets import (
 )
 
 from src.database.db import Database
+from src.scanner.mask import DEFAULT_MASK, get_custom_tokens
 from src.utils.logger import get_logger
 
 log = get_logger()
 
 
-def _build_folder_name(artist, year_recorded, title, catalog, media, year_released) -> str:
-    name = f"{artist} - {year_recorded} - {title}"
-    if catalog:
-        name += f" [{catalog}]"
-    if media:
-        name += f" [{media}]"
-    if year_released:
-        name += f" ({year_released})"
-    return name
+def _build_folder_name(fields: dict, mask: str) -> str:
+    """Reconstruct folder name from fields using the current mask."""
+    result = mask
+    for token, value in fields.items():
+        if not value:
+            # Remove optional bracketed tokens when empty
+            result = result.replace(f"[{{{token}}}]", "")
+            result = result.replace(f"({{{token}}})", "")
+            result = result.replace(f"{{{token}}}", "")
+        else:
+            result = result.replace(f"{{{token}}}", value)
+    # Collapse multiple spaces
+    while "  " in result:
+        result = result.replace("  ", " ")
+    return result.strip()
+
+
+def _load_extras(release: dict) -> dict:
+    try:
+        return json.loads(release.get("extras") or "{}")
+    except Exception:
+        return {}
 
 
 class EditReleaseDialog(QDialog):
@@ -27,6 +42,9 @@ class EditReleaseDialog(QDialog):
         super().__init__(parent)
         self._db = db
         self._release = release
+        self._mask = db.get_setting("folder_mask", DEFAULT_MASK)
+        self._extra_tokens = get_custom_tokens(self._mask)
+        self._extras_current = _load_extras(release)
         self.setWindowTitle("Edit Release")
         self.setMinimumWidth(480)
         self._setup_ui()
@@ -37,6 +55,7 @@ class EditReleaseDialog(QDialog):
         form = QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
 
+        # Fixed known fields
         self._artist = QLineEdit(self._release["artist"])
         self._year_recorded = QLineEdit(self._release["year_recorded"])
         self._year_recorded.setMaxLength(4)
@@ -55,6 +74,15 @@ class EditReleaseDialog(QDialog):
         form.addRow("Cat. No.:", self._catalog)
         form.addRow("Media:", self._media)
         form.addRow("Rel. Year:", self._year_released)
+
+        # Dynamic extra fields from current mask
+        self._extra_edits: dict[str, QLineEdit] = {}
+        for token in self._extra_tokens:
+            edit = QLineEdit(self._extras_current.get(token, ""))
+            label = token.replace("_", " ").title() + ":"
+            form.addRow(label, edit)
+            self._extra_edits[token] = edit
+
         layout.addLayout(form)
 
         self._preview = QLabel()
@@ -70,26 +98,37 @@ class EditReleaseDialog(QDialog):
         for w in (self._artist, self._year_recorded, self._title,
                   self._catalog, self._media, self._year_released):
             w.textChanged.connect(self._update_preview)
+        for edit in self._extra_edits.values():
+            edit.textChanged.connect(self._update_preview)
+
         self._update_preview()
 
+    def _all_fields(self) -> dict:
+        fields = {
+            "artist": self._artist.text().strip(),
+            "year_recorded": self._year_recorded.text().strip(),
+            "title": self._title.text().strip(),
+            "catalog_number": self._catalog.text().strip(),
+            "media": self._media.text().strip(),
+            "year_released": self._year_released.text().strip(),
+        }
+        for token, edit in self._extra_edits.items():
+            fields[token] = edit.text().strip()
+        return fields
+
     def _update_preview(self):
-        name = _build_folder_name(
-            self._artist.text().strip(),
-            self._year_recorded.text().strip(),
-            self._title.text().strip(),
-            self._catalog.text().strip(),
-            self._media.text().strip(),
-            self._year_released.text().strip(),
-        )
+        fields = self._all_fields()
+        name = _build_folder_name(fields, self._mask)
         self._preview.setText(f"Folder: {name}")
 
     def _on_save(self):
-        artist = self._artist.text().strip()
-        year_recorded = self._year_recorded.text().strip()
-        title = self._title.text().strip()
-        catalog = self._catalog.text().strip() or None
-        media = self._media.text().strip() or None
-        year_released = self._year_released.text().strip() or None
+        fields = self._all_fields()
+        artist = fields["artist"]
+        year_recorded = fields["year_recorded"]
+        title = fields["title"]
+        catalog = fields["catalog_number"] or None
+        media = fields["media"] or None
+        year_released = fields["year_released"] or None
 
         if not artist or not year_recorded or not title:
             QMessageBox.warning(self, "Error", "Artist, recording year, and title are required.")
@@ -103,11 +142,13 @@ class EditReleaseDialog(QDialog):
             QMessageBox.warning(self, "Error", "Release year must be a 4-digit number.")
             return
 
+        # Build extras dict from extra token fields
+        extras = {token: fields[token] for token in self._extra_tokens if fields.get(token)}
+
         old_path = Path(self._release["folder_path"])
-        new_name = _build_folder_name(artist, year_recorded, title, catalog, media, year_released)
+        new_name = _build_folder_name(fields, self._mask)
         new_path = old_path.parent / new_name
 
-        # Rename on disk if available and name changed
         if self._release["is_available"] and old_path.name != new_name:
             if new_path.exists():
                 QMessageBox.warning(
@@ -122,7 +163,6 @@ class EditReleaseDialog(QDialog):
                 QMessageBox.warning(self, "Rename Error", str(e))
                 return
         elif not self._release["is_available"]:
-            # Disk offline — update only DB, path stays as last_seen
             new_path = old_path
 
         self._db.rename_release(
@@ -134,5 +174,6 @@ class EditReleaseDialog(QDialog):
             catalog_number=catalog,
             media=media,
             year_released=year_released,
+            extras=json.dumps(extras),
         )
         self.accept()

@@ -20,7 +20,12 @@ ROOT = Path(__file__).parent
 DIST = ROOT / "dist"
 BUILD = ROOT / "build"
 APP_NAME = "Music Librarian"
-VERSION = "1.0.0"
+
+# In CI, GITHUB_REF_NAME is the tag (e.g. "v1.0.1"). Strip leading "v".
+# Locally falls back to "dev".
+import os
+_ref = os.environ.get("GITHUB_REF_NAME", "")
+VERSION = _ref.lstrip("v") if _ref.startswith("v") else "dev"
 
 IS_MAC = platform.system() == "Darwin"
 IS_WIN = platform.system() == "Windows"

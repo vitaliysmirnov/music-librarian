@@ -2,7 +2,7 @@ import platform
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QEvent
+from PySide6.QtCore import Qt, QTimer, QEvent, QObject, Signal
 from PySide6.QtGui import QIcon, QAction, QKeySequence, QPixmap, QPainter, QColor, QPen, QBrush
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar,
@@ -22,6 +22,11 @@ from src.watcher.watcher import LibraryWatcher
 log = get_logger()
 
 _DRIVE_POLL_INTERVAL_MS = 20_000
+
+
+class _FsChangeSignal(QObject):
+    """Bridges the watchdog thread to the Qt main thread."""
+    triggered = Signal()
 
 
 def _set_dock_visible(visible: bool) -> None:
@@ -47,6 +52,9 @@ class MainWindow(QMainWindow):
         self._db = db
         self._qt_log_handler = qt_log_handler
         self._watcher: LibraryWatcher | None = None
+
+        self._fs_signal = _FsChangeSignal()
+        self._fs_signal.triggered.connect(self._on_fs_change)
 
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._auto_scan)
@@ -204,7 +212,7 @@ class MainWindow(QMainWindow):
     # ── Watcher ───────────────────────────────────────────────────────────
 
     def _start_watcher(self):
-        self._watcher = LibraryWatcher(self._db, self._on_fs_change)
+        self._watcher = LibraryWatcher(self._db, self._fs_signal.triggered.emit)
         self._watcher.start()
 
     def _stop_watcher(self):

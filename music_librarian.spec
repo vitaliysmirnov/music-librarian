@@ -13,6 +13,7 @@ a = Analysis(
     binaries=[],
     datas=[],
     hiddenimports=[
+        "certifi",
         # watchdog platform backends
         "watchdog.observers",
         "watchdog.observers.fsevents",

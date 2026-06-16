@@ -1,4 +1,5 @@
 import json
+import ssl
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
@@ -18,11 +19,17 @@ def _fetch_latest() -> dict | None:
         return None  # no update checks for dev builds
 
     try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        ctx = None
+
+    try:
         req = urllib.request.Request(
             _RELEASES_API,
             headers={"User-Agent": "MusicLibrarian-updater"},
         )
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT, context=ctx) as r:
             data = json.loads(r.read())
         latest_tag = data["tag_name"]          # e.g. "v0.0.5"
         current_tag = f"v{__version__}"        # e.g. "v0.0.4"

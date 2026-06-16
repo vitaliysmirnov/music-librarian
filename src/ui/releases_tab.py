@@ -162,7 +162,7 @@ class ReleasesModel(QAbstractTableModel):
 
     def load(self, rows, token_order: list[str], extra_tokens: list[str]):
         self.beginResetModel()
-        self._rows = list(rows)
+        self._rows = [dict(r) for r in rows]
         self._token_order = token_order
         self._extra_tokens = extra_tokens
         self.endResetModel()

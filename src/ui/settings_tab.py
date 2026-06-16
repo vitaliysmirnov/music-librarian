@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox,
     QRadioButton, QHBoxLayout, QLabel,
     QButtonGroup, QGraphicsOpacityEffect, QPlainTextEdit, QPushButton,
-    QLineEdit, QFileDialog,
+    QLineEdit, QFileDialog, QScrollArea,
 )
 
 from src.database.db import Database
@@ -39,7 +39,18 @@ class SettingsTab(QWidget):
         self._load()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        outer.addWidget(scroll)
+
+        inner = QWidget()
+        scroll.setWidget(inner)
+
+        layout = QVBoxLayout(inner)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
 

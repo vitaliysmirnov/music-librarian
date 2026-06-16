@@ -54,7 +54,7 @@ _TIEBREAKER_TOKENS = ["artist", "year_recorded", "title"]
 
 SETTINGS_KEY = "releases_header_state"
 
-_PLAY_WIDTH          = 8
+_PLAY_WIDTH          = 64
 _EXTRA_DEFAULT_WIDTH = 90
 
 _AUDIO_EXTENSIONS = {
@@ -434,11 +434,12 @@ class ReleasesTab(QWidget):
         hdr.setSectionsClickable(True)
         hdr.setStretchLastSection(False)
         hdr.setSectionResizeMode(QHeaderView.Interactive)
-        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Fixed)
+        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
         hdr.setContextMenuPolicy(Qt.CustomContextMenu)
         hdr.customContextMenuRequested.connect(self._show_header_menu)
         hdr.sectionMoved.connect(self._on_section_moved)
         hdr.sectionResized.connect(self._save_header_state)
+        hdr.sectionClicked.connect(self._on_header_clicked)
 
         layout.addWidget(self._table)
 
@@ -453,7 +454,7 @@ class ReleasesTab(QWidget):
         open_btn.clicked.connect(self._open_release)
         btn_row.addWidget(open_btn)
 
-        drag_hint = QLabel("Drag a release to your audio player to enqueue it")
+        drag_hint = QLabel("Click ▶ to play a release, or drag it to your audio player")
         drag_hint.setStyleSheet("color: palette(placeholderText); font-size: 11px;")
         btn_row.addWidget(drag_hint)
 
@@ -465,6 +466,12 @@ class ReleasesTab(QWidget):
         btn_row.addWidget(reset_btn)
 
         layout.addLayout(btn_row)
+
+    # ── Header click ──────────────────────────────────────────────────────
+
+    def _on_header_clicked(self, logical: int):
+        if logical == COL_PLAY:
+            self._table.horizontalHeader().setSortIndicatorShown(False)
 
     # ── Double-click ───────────────────────────────────────────────────────
 
@@ -516,6 +523,10 @@ class ReleasesTab(QWidget):
             self._table.horizontalHeader().restoreState(data)
         except Exception:
             pass
+        # restoreState re-applies the saved resize mode and width; always override.
+        hdr = self._table.horizontalHeader()
+        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
+        hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
 
     def invalidate_header_state(self):
         self._db.set_setting(SETTINGS_KEY, "")
@@ -543,12 +554,19 @@ class ReleasesTab(QWidget):
         self._model.load(rows, token_order, extra_tokens)
         if self._model.columnCount() != prev_n:
             self._apply_default_widths()
+        else:
+            # beginResetModel resets header section sizes; restore saved state.
+            self._restore_header_state()
+        # Always enforce play column — restore may have overwritten it.
+        hdr = self._table.horizontalHeader()
+        hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
+        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
         self._count_label.setText(f"Releases: {len(rows)}")
 
     def _apply_default_widths(self):
         hdr = self._table.horizontalHeader()
         hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
-        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Fixed)
+        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
         for i, tok in enumerate(self._model._token_order):
             hdr.resizeSection(1 + i, _TOKEN_WIDTH.get(tok, 100))
         n_kn = self._model._n_known()

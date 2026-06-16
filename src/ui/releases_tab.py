@@ -1,6 +1,7 @@
 import json
 import os
 import platform
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -13,37 +14,68 @@ from PySide6.QtWidgets import (
     QApplication, QStyledItemDelegate, QStyle,
 )
 
-from src.scanner.mask import DEFAULT_MASK, get_custom_tokens
+from src.scanner.mask import DEFAULT_MASK, KNOWN_TOKENS, get_custom_tokens
 from src.ui.edit_release_dialog import EditReleaseDialog
 
-# Fixed columns that always appear (in this order).
-# Column 0 is the play button — no header text, narrow fixed width.
-_FIXED_HEADERS = ["", "Artist", "Rec. Year", "Release", "Media", "Cat. No.", "Rel. Year"]
-_TAIL_HEADERS  = ["Source", "Available", "Path"]
+# Column 0 is always the play button.
+COL_PLAY = 0
 
-_N_FIXED = len(_FIXED_HEADERS)   # 7
-_N_TAIL  = len(_TAIL_HEADERS)    # 3
+# Human-readable headers and default widths for each known token, in
+# the order they are looked up (actual display order follows the mask).
+_TOKEN_HEADER: dict[str, str] = {
+    "artist":         "Artist",
+    "year_recorded":  "Rec. Year",
+    "title":          "Release",
+    "catalog_number": "Cat. No.",
+    "media":          "Media",
+    "year_released":  "Rel. Year",
+}
+_TOKEN_WIDTH: dict[str, int] = {
+    "artist":         160,
+    "year_recorded":  72,
+    "title":          220,
+    "catalog_number": 180,
+    "media":          60,
+    "year_released":  70,
+}
+_TOKEN_DB_KEY: dict[str, str] = {
+    "artist":         "artist",
+    "year_recorded":  "year_recorded",
+    "title":          "title",
+    "catalog_number": "catalog_number",
+    "media":          "media",
+    "year_released":  "year_released",
+}
 
-COL_PLAY     = 0
-COL_ARTIST   = 1
-COL_YEAR_REC = 2
-COL_TITLE    = 3
-COL_MEDIA    = 4
-COL_CATALOG  = 5
-COL_YEAR_REL = 6
+_TAIL_HEADERS = ["Source", "Available", "Path"]
+_TAIL_WIDTHS  = [130, 70, 300]
 
-_TIEBREAKER = [COL_ARTIST, COL_YEAR_REC, COL_TITLE]
+_TIEBREAKER_TOKENS = ["artist", "year_recorded", "title"]
 
 SETTINGS_KEY = "releases_header_state"
 
-_FIXED_WIDTHS = [32, 160, 72, 220, 60, 180, 70]
-_TAIL_WIDTHS  = [130, 70, 300]
+_PLAY_WIDTH          = 8
 _EXTRA_DEFAULT_WIDTH = 90
 
 _AUDIO_EXTENSIONS = {
     ".flac", ".mp3", ".wav", ".aiff", ".aif", ".m4a", ".alac",
     ".ogg", ".opus", ".ape", ".wv", ".wma", ".aac", ".dsf", ".dff",
 }
+
+
+def _known_token_order(mask: str) -> list[str]:
+    """Return KNOWN_TOKENS in the order they appear in the mask.
+    Any known token absent from the mask is appended at the end."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for tok in re.findall(r"\{(\w+)\}", mask):
+        if tok in KNOWN_TOKENS and tok not in seen:
+            seen.add(tok)
+            ordered.append(tok)
+    for tok in _TOKEN_HEADER:          # stable fallback order
+        if tok not in seen:
+            ordered.append(tok)
+    return ordered
 
 
 def _extras_from_row(row) -> dict:
@@ -95,28 +127,43 @@ class ReleasesModel(QAbstractTableModel):
     def __init__(self):
         super().__init__()
         self._rows: list = []
+        self._token_order: list[str] = list(_TOKEN_HEADER)  # known tokens in mask order
         self._extra_tokens: list[str] = []
 
-    # ── column helpers ────────────────────────────────────────────────────
+    # ── column layout ─────────────────────────────────────────────────────
+    # Logical columns:
+    #   0              → COL_PLAY (play button)
+    #   1 … N_KNOWN    → known tokens in mask order
+    #   N_KNOWN+1 …    → custom (extra) tokens
+    #   … tail         → Source, Available, Path
+
+    def _n_known(self) -> int:
+        return len(self._token_order)
+
+    def col_for_token(self, token: str) -> int:
+        """Return the logical column index for a known token (1-based after COL_PLAY)."""
+        return 1 + self._token_order.index(token)
+
+    def _col_avail(self) -> int:
+        return 1 + self._n_known() + len(self._extra_tokens) + 1
+
+    def _col_source(self) -> int:
+        return 1 + self._n_known() + len(self._extra_tokens)
+
+    def _col_path(self) -> int:
+        return 1 + self._n_known() + len(self._extra_tokens) + 2
 
     def _all_headers(self) -> list[str]:
-        extra_labels = [t.replace("_", " ").title() for t in self._extra_tokens]
-        return _FIXED_HEADERS + extra_labels + _TAIL_HEADERS
-
-    def col_avail(self) -> int:
-        return _N_FIXED + len(self._extra_tokens) + 1
-
-    def col_source(self) -> int:
-        return _N_FIXED + len(self._extra_tokens)
-
-    def col_path(self) -> int:
-        return _N_FIXED + len(self._extra_tokens) + 2
+        known_hdrs  = [_TOKEN_HEADER[t] for t in self._token_order]
+        extra_hdrs  = [t.replace("_", " ").title() for t in self._extra_tokens]
+        return [""] + known_hdrs + extra_hdrs + _TAIL_HEADERS
 
     # ── QAbstractTableModel interface ─────────────────────────────────────
 
-    def load(self, rows, extra_tokens: list[str]):
+    def load(self, rows, token_order: list[str], extra_tokens: list[str]):
         self.beginResetModel()
         self._rows = list(rows)
+        self._token_order = token_order
         self._extra_tokens = extra_tokens
         self.endResetModel()
 
@@ -124,7 +171,7 @@ class ReleasesModel(QAbstractTableModel):
         return len(self._rows)
 
     def columnCount(self, parent=QModelIndex()):
-        return _N_FIXED + len(self._extra_tokens) + _N_TAIL
+        return 1 + self._n_known() + len(self._extra_tokens) + len(_TAIL_HEADERS)
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role == Qt.DisplayRole and orientation == Qt.Horizontal:
@@ -135,19 +182,22 @@ class ReleasesModel(QAbstractTableModel):
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():
             return None
-        row = self._rows[index.row()]
-        col = index.column()
-        n_extra = len(self._extra_tokens)
+        row  = self._rows[index.row()]
+        col  = index.column()
+        n_kn = self._n_known()
+        n_ex = len(self._extra_tokens)
 
         if role == Qt.DisplayRole:
             if col == COL_PLAY:
-                return None  # drawn by delegate
-            if col < _N_FIXED:
-                return _fixed_value(row, col)
-            if col < _N_FIXED + n_extra:
-                token = self._extra_tokens[col - _N_FIXED]
+                return None
+            if col <= n_kn:                      # known token columns (1-based)
+                token = self._token_order[col - 1]
+                return row.get(_TOKEN_DB_KEY[token]) or ""
+            extra_i = col - 1 - n_kn
+            if extra_i < n_ex:                   # custom token columns
+                token = self._extra_tokens[extra_i]
                 return _extras_from_row(row).get(token, "")
-            tail = col - _N_FIXED - n_extra
+            tail = col - 1 - n_kn - n_ex
             if tail == 0:
                 return Path(row["source_path"]).name
             if tail == 1:
@@ -186,17 +236,6 @@ class ReleasesModel(QAbstractTableModel):
         return mime
 
 
-def _fixed_value(row, col: int) -> str:
-    if col == COL_PLAY:     return ""
-    if col == COL_ARTIST:   return row["artist"]
-    if col == COL_YEAR_REC: return row["year_recorded"]
-    if col == COL_TITLE:    return row["title"]
-    if col == COL_MEDIA:    return row["media"] or ""
-    if col == COL_CATALOG:  return row["catalog_number"] or ""
-    if col == COL_YEAR_REL: return row["year_released"] or ""
-    return ""
-
-
 class _PlayButtonDelegate(QStyledItemDelegate):
     def __init__(self, db, parent=None):
         super().__init__(parent)
@@ -209,7 +248,7 @@ class _PlayButtonDelegate(QStyledItemDelegate):
 
         row = index.data(Qt.UserRole)
         if not row or not row["is_available"]:
-            return  # no button for unavailable releases
+            return
 
         painter.save()
         if option.state & QStyle.State_MouseOver:
@@ -220,7 +259,7 @@ class _PlayButtonDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option, index):
         if index.column() == COL_PLAY:
-            return QSize(32, 24)
+            return QSize(_PLAY_WIDTH, 24)
         return super().sizeHint(option, index)
 
     def editorEvent(self, event, model, option, index):
@@ -238,21 +277,19 @@ class _MultiSortProxy(QSortFilterProxyModel):
     def __init__(self):
         super().__init__()
         self._primary_col: int | None = None
-        self._primary_order = Qt.AscendingOrder
 
     def _src(self) -> ReleasesModel:
         return self.sourceModel()
 
     def sort(self, column: int, order=Qt.AscendingOrder):
         if column == COL_PLAY:
-            return  # play column is not sortable
+            return
         self._primary_col = column if column >= 0 else None
-        self._primary_order = order
         super().sort(column, order)
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
         src = self._src()
-        avail_col = src.col_avail()
+        avail_col = src._col_avail()
 
         def val(index: QModelIndex, col: int) -> tuple:
             if col == avail_col:
@@ -266,15 +303,17 @@ class _MultiSortProxy(QSortFilterProxyModel):
             except ValueError:
                 return (1, 0.0, raw.lower())
 
-        primary = self._primary_col if self._primary_col is not None else COL_ARTIST
+        default_primary = src.col_for_token("artist")
+        primary = self._primary_col if self._primary_col is not None else default_primary
         lv, rv = val(left, primary), val(right, primary)
         if lv != rv:
             return lv < rv
 
-        for tb in _TIEBREAKER:
-            if primary == tb:
+        for tok in _TIEBREAKER_TOKENS:
+            tb_col = src.col_for_token(tok)
+            if primary == tb_col:
                 continue
-            lv, rv = val(left, tb), val(right, tb)
+            lv, rv = val(left, tb_col), val(right, tb_col)
             if lv != rv:
                 return lv < rv
 
@@ -282,9 +321,6 @@ class _MultiSortProxy(QSortFilterProxyModel):
 
 
 class _DragTableView(QTableView):
-    """QTableView that starts a file drag after the system drag-distance
-    threshold, without letting Qt extend the row selection on mouse-move."""
-
     def __init__(self):
         super().__init__()
         self._drag_start: QPoint | None = None
@@ -299,7 +335,6 @@ class _DragTableView(QTableView):
             super().mouseMoveEvent(event)
             return
 
-        # Don't start drag from the play button column
         pressed_index = self.indexAt(self._drag_start)
         if pressed_index.isValid() and pressed_index.column() == COL_PLAY:
             super().mouseMoveEvent(event)
@@ -338,7 +373,6 @@ class _DragTableView(QTableView):
 
         mime = QMimeData()
         mime.setUrls(urls)
-
         drag = QDrag(self)
         drag.setMimeData(mime)
         drag.exec(Qt.DropAction.CopyAction)
@@ -390,7 +424,7 @@ class ReleasesTab(QWidget):
         self._table.setDragEnabled(True)
         self._table.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self._table.setDefaultDropAction(Qt.DropAction.CopyAction)
-        self._table.setMouseTracking(True)  # needed for hover highlight on play button
+        self._table.setMouseTracking(True)
 
         self._delegate = _PlayButtonDelegate(self._db, self._table)
         self._table.setItemDelegate(self._delegate)
@@ -432,11 +466,11 @@ class ReleasesTab(QWidget):
 
         layout.addLayout(btn_row)
 
-    # ── Double-click handling ──────────────────────────────────────────────
+    # ── Double-click ───────────────────────────────────────────────────────
 
     def _on_double_click(self, proxy_index):
         if proxy_index.column() == COL_PLAY:
-            return  # delegate handles single click; ignore double-click
+            return
         self._edit_release()
 
     # ── Header context menu ────────────────────────────────────────────────
@@ -447,7 +481,7 @@ class ReleasesTab(QWidget):
         menu = QMenu(self)
         for logical_idx, name in enumerate(headers):
             if logical_idx == COL_PLAY:
-                continue  # play column is always visible, not user-togglable
+                continue
             label = name if name else f"Column {logical_idx}"
             action = menu.addAction(label)
             action.setCheckable(True)
@@ -461,7 +495,6 @@ class ReleasesTab(QWidget):
     # ── Header state ───────────────────────────────────────────────────────
 
     def _on_section_moved(self, logical, old_visual, new_visual):
-        # Prevent the play button column from being moved away from position 0
         if logical == COL_PLAY and new_visual != 0:
             self._table.horizontalHeader().moveSection(new_visual, 0)
             return
@@ -494,43 +527,35 @@ class ReleasesTab(QWidget):
             visual = hdr.visualIndex(logical)
             if visual != logical:
                 hdr.moveSection(visual, logical)
-        for i, w in enumerate(_FIXED_WIDTHS):
+        self._apply_default_widths()
+        for i in range(n):
             hdr.setSectionHidden(i, False)
-            hdr.resizeSection(i, w)
-        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Fixed)
-        n_extra = len(self._model._extra_tokens)
-        for i in range(n_extra):
-            col = _N_FIXED + i
-            hdr.setSectionHidden(col, False)
-            hdr.resizeSection(col, _EXTRA_DEFAULT_WIDTH)
-        for i, w in enumerate(_TAIL_WIDTHS):
-            col = _N_FIXED + n_extra + i
-            hdr.setSectionHidden(col, False)
-            hdr.resizeSection(col, w)
         self._save_header_state()
 
     # ── Data ───────────────────────────────────────────────────────────────
 
     def refresh(self):
         mask = self._db.get_setting("folder_mask", DEFAULT_MASK)
+        token_order  = _known_token_order(mask)
         extra_tokens = get_custom_tokens(mask)
         rows = self._db.get_releases(search=self._search.text().strip())
         prev_n = self._model.columnCount()
-        self._model.load(rows, extra_tokens)
+        self._model.load(rows, token_order, extra_tokens)
         if self._model.columnCount() != prev_n:
             self._apply_default_widths()
         self._count_label.setText(f"Releases: {len(rows)}")
 
     def _apply_default_widths(self):
         hdr = self._table.horizontalHeader()
-        for i, w in enumerate(_FIXED_WIDTHS):
-            hdr.resizeSection(i, w)
+        hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
         hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Fixed)
-        n_extra = len(self._model._extra_tokens)
-        for i in range(n_extra):
-            hdr.resizeSection(_N_FIXED + i, _EXTRA_DEFAULT_WIDTH)
+        for i, tok in enumerate(self._model._token_order):
+            hdr.resizeSection(1 + i, _TOKEN_WIDTH.get(tok, 100))
+        n_kn = self._model._n_known()
+        for i in range(len(self._model._extra_tokens)):
+            hdr.resizeSection(1 + n_kn + i, _EXTRA_DEFAULT_WIDTH)
         for i, w in enumerate(_TAIL_WIDTHS):
-            hdr.resizeSection(_N_FIXED + n_extra + i, w)
+            hdr.resizeSection(1 + n_kn + len(self._model._extra_tokens) + i, w)
 
     def _selected_row(self) -> dict | None:
         indexes = self._table.selectionModel().selectedRows()

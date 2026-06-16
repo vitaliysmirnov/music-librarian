@@ -197,6 +197,22 @@ class _MultiSortProxy(QSortFilterProxyModel):
         return False
 
 
+_AUDIO_EXTENSIONS = {
+    ".flac", ".mp3", ".wav", ".aiff", ".aif", ".m4a", ".alac",
+    ".ogg", ".opus", ".ape", ".wv", ".wma", ".aac", ".dsf", ".dff",
+}
+
+
+def _audio_urls(folder_path: str) -> list[QUrl]:
+    """Return sorted file:// URLs for all audio files in folder_path."""
+    folder = Path(folder_path)
+    files = sorted(
+        f for f in folder.iterdir()
+        if f.is_file() and f.suffix.lower() in _AUDIO_EXTENSIONS
+    )
+    return [QUrl.fromLocalFile(str(f)) for f in files]
+
+
 class _DragTableView(QTableView):
     """QTableView that starts a file drag after the system drag-distance
     threshold, without letting Qt extend the row selection on mouse-move."""
@@ -229,14 +245,17 @@ class _DragTableView(QTableView):
         if not proxy_index.isValid():
             return
 
-        # Map through proxy to get the actual row data
         source_index = self.model().mapToSource(proxy_index)
         row = self.model().sourceModel().get_row(source_index.row())
         if row is None or not row["is_available"]:
             return
 
+        urls = _audio_urls(row["folder_path"])
+        if not urls:
+            return
+
         mime = QMimeData()
-        mime.setUrls([QUrl.fromLocalFile(row["folder_path"])])
+        mime.setUrls(urls)
 
         drag = QDrag(self)
         drag.setMimeData(mime)

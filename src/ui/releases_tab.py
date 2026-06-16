@@ -198,8 +198,8 @@ class _MultiSortProxy(QSortFilterProxyModel):
 
 
 class _DragTableView(QTableView):
-    """QTableView that initiates a drag only after the drag-distance threshold,
-    so a simple click-and-move doesn't accidentally extend the selection."""
+    """QTableView that starts a file drag after the system drag-distance
+    threshold, without letting Qt extend the row selection on mouse-move."""
 
     def __init__(self):
         super().__init__()
@@ -211,18 +211,17 @@ class _DragTableView(QTableView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if (
-            self._drag_start is not None
-            and event.buttons() & Qt.MouseButton.LeftButton
-            and (event.pos() - self._drag_start).manhattanLength()
-                >= QApplication.startDragDistance()
-        ):
-            index = self.indexAt(self._drag_start)
-            if index.isValid():
-                self._drag_start = None
-                self.startDrag(Qt.DropAction.CopyAction)
-                return
-        super().mouseMoveEvent(event)
+        if self._drag_start is None or not (event.buttons() & Qt.MouseButton.LeftButton):
+            super().mouseMoveEvent(event)
+            return
+
+        if (event.pos() - self._drag_start).manhattanLength() < QApplication.startDragDistance():
+            # Below threshold — swallow the event so Qt never starts rubber-band selection.
+            return
+
+        # Threshold reached — start a drag, then forget the start point.
+        self._drag_start = None
+        self.startDrag(Qt.DropAction.CopyAction)
 
     def mouseReleaseEvent(self, event):
         self._drag_start = None

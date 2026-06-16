@@ -4,8 +4,8 @@ import platform
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QSortFilterProxyModel
-from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QSortFilterProxyModel, QUrl
+from PySide6.QtGui import QColor, QDrag, QMimeData
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel,
     QPushButton, QTableView, QHeaderView, QAbstractItemView, QMenu,
@@ -121,6 +121,25 @@ class ReleasesModel(QAbstractTableModel):
         r = self._rows[row_index] if row_index < len(self._rows) else None
         return dict(r) if r else None
 
+    def supportedDragActions(self):
+        return Qt.DropAction.CopyAction
+
+    def mimeData(self, indexes):
+        # Collect unique rows, only available releases
+        seen_rows = set()
+        urls = []
+        for index in indexes:
+            row_i = index.row()
+            if row_i in seen_rows:
+                continue
+            seen_rows.add(row_i)
+            row = self._rows[row_i]
+            if row["is_available"]:
+                urls.append(QUrl.fromLocalFile(row["folder_path"]))
+        mime = QMimeData()
+        mime.setUrls(urls)
+        return mime
+
 
 def _fixed_value(row, col: int) -> str:
     if col == COL_ARTIST:   return row["artist"]
@@ -217,6 +236,9 @@ class ReleasesTab(QWidget):
         self._table.setAlternatingRowColors(True)
         self._table.doubleClicked.connect(self._edit_release)
         self._table.verticalHeader().setVisible(False)
+        self._table.setDragEnabled(True)
+        self._table.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self._table.setDefaultDropAction(Qt.DropAction.CopyAction)
 
         hdr = self._table.horizontalHeader()
         hdr.setSectionsMovable(True)
@@ -240,6 +262,10 @@ class ReleasesTab(QWidget):
         open_btn = QPushButton("Open Folder")
         open_btn.clicked.connect(self._open_release)
         btn_row.addWidget(open_btn)
+
+        drag_hint = QLabel("Drag a release to your audio player to enqueue it")
+        drag_hint.setStyleSheet("color: palette(placeholderText); font-size: 11px;")
+        btn_row.addWidget(drag_hint)
 
         btn_row.addStretch()
 

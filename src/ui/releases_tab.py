@@ -4,11 +4,11 @@ import platform
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QSortFilterProxyModel, QUrl, QMimeData
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QSortFilterProxyModel, QUrl, QMimeData, QPoint
 from PySide6.QtGui import QColor, QDrag
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel,
-    QPushButton, QTableView, QHeaderView, QAbstractItemView, QMenu,
+    QPushButton, QTableView, QHeaderView, QAbstractItemView, QMenu, QApplication,
 )
 
 from src.scanner.mask import DEFAULT_MASK, get_custom_tokens
@@ -197,6 +197,38 @@ class _MultiSortProxy(QSortFilterProxyModel):
         return False
 
 
+class _DragTableView(QTableView):
+    """QTableView that initiates a drag only after the drag-distance threshold,
+    so a simple click-and-move doesn't accidentally extend the selection."""
+
+    def __init__(self):
+        super().__init__()
+        self._drag_start: QPoint | None = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            self._drag_start is not None
+            and event.buttons() & Qt.MouseButton.LeftButton
+            and (event.pos() - self._drag_start).manhattanLength()
+                >= QApplication.startDragDistance()
+        ):
+            index = self.indexAt(self._drag_start)
+            if index.isValid():
+                self._drag_start = None
+                self.startDrag(Qt.DropAction.CopyAction)
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_start = None
+        super().mouseReleaseEvent(event)
+
+
 class ReleasesTab(QWidget):
     def __init__(self, db):
         super().__init__()
@@ -228,7 +260,7 @@ class ReleasesTab(QWidget):
         self._proxy = _MultiSortProxy()
         self._proxy.setSourceModel(self._model)
 
-        self._table = QTableView()
+        self._table = _DragTableView()
         self._table.setModel(self._proxy)
         self._table.setSortingEnabled(True)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)

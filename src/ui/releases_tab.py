@@ -69,7 +69,11 @@ def _play_release(folder_path: str, player_path: str):
     if not files:
         return
     if player_path:
-        subprocess.Popen([player_path] + files)
+        clean = player_path.rstrip("/")
+        if platform.system() == "Darwin" and clean.endswith(".app"):
+            subprocess.Popen(["open", "-a", clean] + files)
+        else:
+            subprocess.Popen([clean] + files)
     elif platform.system() == "Darwin":
         subprocess.Popen(["open"] + files)
     elif platform.system() == "Windows":

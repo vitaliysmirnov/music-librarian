@@ -146,7 +146,6 @@ class SettingsTab(QWidget):
         self._player_edit = QLineEdit()
         self._player_edit.setPlaceholderText("e.g. /Applications/VLC.app/Contents/MacOS/VLC")
         self._player_edit.returnPressed.connect(self._save_player)
-        self._player_edit.editingFinished.connect(self._save_player)
         self._player_browse_btn = QPushButton("Browse…")
         self._player_browse_btn.setFixedWidth(75)
         self._player_browse_btn.clicked.connect(self._browse_player)
@@ -256,17 +255,6 @@ class SettingsTab(QWidget):
         else:
             path, _ = QFileDialog.getOpenFileName(self, "Select Audio Player")
         if path:
-            # On macOS, if user picks a .app bundle, point to the executable inside
-            if path.endswith(".app"):
-                import os
-                from pathlib import Path
-                macos_dir = Path(path) / "Contents" / "MacOS"
-                executables = [
-                    f for f in macos_dir.iterdir()
-                    if f.is_file() and os.access(str(f), os.X_OK)
-                ] if macos_dir.exists() else []
-                if executables:
-                    path = str(executables[0])
             self._player_edit.setText(path)
             self._save_player()
 

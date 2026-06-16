@@ -60,8 +60,6 @@ a = Analysis(
         # stdlib modules not needed at runtime
         "tkinter",
         "unittest",
-        "html",
-        "http",
         "xmlrpc",
         "pydoc",
         "doctest",

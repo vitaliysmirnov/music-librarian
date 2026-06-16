@@ -277,6 +277,7 @@ class _MultiSortProxy(QSortFilterProxyModel):
     def __init__(self):
         super().__init__()
         self._primary_col: int | None = None
+        self._primary_order: Qt.SortOrder = Qt.AscendingOrder
 
     def _src(self) -> ReleasesModel:
         return self.sourceModel()
@@ -285,6 +286,7 @@ class _MultiSortProxy(QSortFilterProxyModel):
         if column == COL_PLAY:
             return
         self._primary_col = column if column >= 0 else None
+        self._primary_order = order
         super().sort(column, order)
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
@@ -441,6 +443,7 @@ class ReleasesTab(QWidget):
         hdr.sectionResized.connect(self._save_header_state)
         hdr.sectionClicked.connect(self._on_header_clicked)
 
+
         layout.addWidget(self._table)
 
         btn_row = QHBoxLayout()
@@ -471,7 +474,11 @@ class ReleasesTab(QWidget):
 
     def _on_header_clicked(self, logical: int):
         if logical == COL_PLAY:
-            self._table.horizontalHeader().setSortIndicatorShown(False)
+            # Qt already moved the indicator to COL_PLAY — put it back.
+            col = self._proxy._primary_col
+            if col is None or col == COL_PLAY:
+                col = COL_PLAY + 1
+            self._table.horizontalHeader().setSortIndicator(col, self._proxy._primary_order)
 
     # ── Double-click ───────────────────────────────────────────────────────
 
@@ -523,10 +530,14 @@ class ReleasesTab(QWidget):
             self._table.horizontalHeader().restoreState(data)
         except Exception:
             pass
-        # restoreState re-applies the saved resize mode and width; always override.
         hdr = self._table.horizontalHeader()
+        # restoreState re-applies saved resize mode and width; always override.
         hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
         hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
+        # If saved state had sort indicator on COL_PLAY, move it to Artist.
+        if hdr.sortIndicatorSection() == COL_PLAY:
+            hdr.setSortIndicator(COL_PLAY + 1, Qt.AscendingOrder)
+            self._save_header_state()
 
     def invalidate_header_state(self):
         self._db.set_setting(SETTINGS_KEY, "")

@@ -219,9 +219,28 @@ class _DragTableView(QTableView):
             # Below threshold — swallow the event so Qt never starts rubber-band selection.
             return
 
-        # Threshold reached — start a drag, then forget the start point.
+        # Threshold reached — build drag manually and execute.
+        press_pos = self._drag_start
         self._drag_start = None
-        self.startDrag(Qt.DropAction.CopyAction)
+        self._exec_drag(press_pos)
+
+    def _exec_drag(self, press_pos: QPoint):
+        proxy_index = self.indexAt(press_pos)
+        if not proxy_index.isValid():
+            return
+
+        # Map through proxy to get the actual row data
+        source_index = self.model().mapToSource(proxy_index)
+        row = self.model().sourceModel().get_row(source_index.row())
+        if row is None or not row["is_available"]:
+            return
+
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(row["folder_path"])])
+
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        drag.exec(Qt.DropAction.CopyAction)
 
     def mouseReleaseEvent(self, event):
         self._drag_start = None

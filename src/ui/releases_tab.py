@@ -245,12 +245,23 @@ class _DragTableView(QTableView):
         if not proxy_index.isValid():
             return
 
-        source_index = self.model().mapToSource(proxy_index)
-        row = self.model().sourceModel().get_row(source_index.row())
-        if row is None or not row["is_available"]:
-            return
+        # Collect all selected rows; if the pressed row isn't among them, use only it.
+        selected_proxy_rows = {
+            idx.row() for idx in self.selectionModel().selectedRows()
+        }
+        if proxy_index.row() not in selected_proxy_rows:
+            selected_proxy_rows = {proxy_index.row()}
 
-        urls = _audio_urls(row["folder_path"])
+        source_model = self.model().sourceModel()
+        urls: list[QUrl] = []
+        for proxy_row in sorted(selected_proxy_rows):
+            source_index = self.model().mapToSource(
+                self.model().index(proxy_row, 0)
+            )
+            row = source_model.get_row(source_index.row())
+            if row and row["is_available"]:
+                urls.extend(_audio_urls(row["folder_path"]))
+
         if not urls:
             return
 

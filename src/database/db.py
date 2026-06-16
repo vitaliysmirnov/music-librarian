@@ -57,6 +57,9 @@ class Database:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA journal_mode=WAL")
+        # Unicode-aware lower() for case-insensitive search across all scripts
+        # (SQLite's built-in LOWER/LIKE only handles ASCII).
+        conn.create_function("py_lower", 1, lambda s: s.lower() if s else "")
         return conn
 
     def _init(self):
@@ -233,12 +236,14 @@ class Database:
         params: list = []
         # Split into words so "david bowie pinups" matches artist + title together
         for word in search.split():
+            w = f"%{word.lower()}%"
             query += (
-                " AND (a.artist LIKE ? OR a.title LIKE ? OR a.year_recorded LIKE ?"
-                " OR a.year_released LIKE ? OR a.catalog_number LIKE ? OR a.media LIKE ?"
-                " OR a.extras LIKE ?)"
+                " AND (py_lower(a.artist) LIKE ? OR py_lower(a.title) LIKE ?"
+                " OR py_lower(a.year_recorded) LIKE ? OR py_lower(a.year_released) LIKE ?"
+                " OR py_lower(a.catalog_number) LIKE ? OR py_lower(a.media) LIKE ?"
+                " OR py_lower(a.extras) LIKE ?)"
             )
-            params += [f"%{word}%"] * 7
+            params += [w] * 7
         query += " ORDER BY a.artist, a.year_recorded, a.title"
         with self.conn() as c:
             return c.execute(query, params).fetchall()

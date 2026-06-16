@@ -4,8 +4,8 @@ import platform
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QSortFilterProxyModel, QUrl
-from PySide6.QtGui import QColor, QDrag, QMimeData
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QSortFilterProxyModel, QUrl, QMimeData
+from PySide6.QtGui import QColor, QDrag
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel,
     QPushButton, QTableView, QHeaderView, QAbstractItemView, QMenu,

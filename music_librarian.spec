@@ -60,7 +60,6 @@ a = Analysis(
         # stdlib modules not needed at runtime
         "tkinter",
         "unittest",
-        "email",
         "html",
         "http",
         "xmlrpc",

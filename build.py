@@ -36,6 +36,11 @@ def run(cmd: list, **kwargs):
     subprocess.run(cmd, check=True, **kwargs)
 
 
+def write_version():
+    (ROOT / "src" / "_version.py").write_text(f'__version__ = "{VERSION}"\n')
+    print(f"version: {VERSION}")
+
+
 def clean():
     for d in (DIST, BUILD):
         if d.exists():
@@ -87,6 +92,7 @@ def make_zip():
 
 
 def main():
+    write_version()
     clean()
     build()
 

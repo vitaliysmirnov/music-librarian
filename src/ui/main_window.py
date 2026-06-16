@@ -10,11 +10,13 @@ from PySide6.QtWidgets import (
     QSystemTrayIcon, QMenu, QApplication, QMessageBox,
 )
 
+from src._version import __version__
 from src.database.db import Database
 from src.scanner.scanner import scan_all, scan_source
 from src.ui.releases_tab import ReleasesTab
 from src.ui.settings_tab import SettingsTab, MODE_AUTO
 from src.ui.sources_tab import SourcesTab
+from src.updater import UpdateChecker
 from src.utils.drive_monitor import DriveMonitor
 from src.utils.logger import QtLogHandler, get_logger
 from src.watcher.watcher import LibraryWatcher
@@ -75,6 +77,10 @@ class MainWindow(QMainWindow):
         self._check_drives()
         self._drive_timer.start()
         self._drive_monitor.start()
+
+        self._updater = UpdateChecker(self)
+        self._updater.update_available.connect(self._on_update_available)
+        QTimer.singleShot(3000, self._updater.check)
 
     # ── UI ────────────────────────────────────────────────────────────────
 
@@ -143,10 +149,29 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "About Music Librarian",
-            "<b>Music Librarian</b><br><br>"
+            f"<b>Music Librarian</b> v{__version__}<br><br>"
             "A personal music collection manager.<br>"
             "Scans folders, tracks releases, monitors changes.",
         )
+
+    def _on_update_available(self, info: dict):
+        import webbrowser
+        version = info["version"]
+        log.info("Update available: v%s", version)
+        self._tray.showMessage(
+            "Music Librarian update available",
+            f"Version {version} is ready. Click to open the download page.",
+            QSystemTrayIcon.MessageIcon.Information,
+            8000,
+        )
+        self._update_info = info
+        self._tray.messageClicked.connect(self._open_update_page)
+
+    def _open_update_page(self):
+        import webbrowser
+        if hasattr(self, "_update_info"):
+            webbrowser.open(self._update_info["url"])
+            self._tray.messageClicked.disconnect(self._open_update_page)
 
     def _open_settings(self):
         self._show_window()

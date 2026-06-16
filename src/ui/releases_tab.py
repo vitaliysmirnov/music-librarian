@@ -2,6 +2,7 @@ import json
 import os
 import platform
 import subprocess
+import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QSortFilterProxyModel, QUrl, QMimeData, QPoint, QSize
@@ -65,22 +66,29 @@ def _audio_urls(folder_path: str) -> list[QUrl]:
 
 
 def _play_release(folder_path: str, player_path: str):
-    files = [str(f) for f in _audio_files(folder_path)]
+    files = _audio_files(folder_path)
     if not files:
         return
+
+    m3u_path = Path(tempfile.gettempdir()) / "music_librarian_play.m3u"
+    m3u_path.write_text(
+        "#EXTM3U\n" + "\n".join(str(f) for f in files),
+        encoding="utf-8",
+    )
+    target = str(m3u_path)
+
     if player_path:
         clean = player_path.rstrip("/")
         if platform.system() == "Darwin" and clean.endswith(".app"):
-            subprocess.Popen(["open", "-a", clean] + files)
+            subprocess.Popen(["open", "-a", clean, target])
         else:
-            subprocess.Popen([clean] + files)
+            subprocess.Popen([clean, target])
     elif platform.system() == "Darwin":
-        subprocess.Popen(["open"] + files)
+        subprocess.Popen(["open", target])
     elif platform.system() == "Windows":
-        for f in files:
-            os.startfile(f)
+        os.startfile(target)
     else:
-        subprocess.Popen(["xdg-open"] + files)
+        subprocess.Popen(["xdg-open", target])
 
 
 class ReleasesModel(QAbstractTableModel):

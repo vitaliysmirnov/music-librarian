@@ -4,40 +4,45 @@ import platform
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QSortFilterProxyModel, QUrl, QMimeData, QPoint
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QSortFilterProxyModel, QUrl, QMimeData, QPoint, QSize
 from PySide6.QtGui import QColor, QDrag
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel,
-    QPushButton, QTableView, QHeaderView, QAbstractItemView, QMenu, QApplication,
+    QPushButton, QTableView, QHeaderView, QAbstractItemView, QMenu,
+    QApplication, QStyledItemDelegate, QStyle,
 )
 
 from src.scanner.mask import DEFAULT_MASK, get_custom_tokens
 from src.ui.edit_release_dialog import EditReleaseDialog
 
-# Fixed columns that always appear (in this order)
-_FIXED_HEADERS = ["Artist", "Rec. Year", "Release", "Media", "Cat. No.", "Rel. Year"]
+# Fixed columns that always appear (in this order).
+# Column 0 is the play button — no header text, narrow fixed width.
+_FIXED_HEADERS = ["", "Artist", "Rec. Year", "Release", "Media", "Cat. No.", "Rel. Year"]
 _TAIL_HEADERS  = ["Source", "Available", "Path"]
 
-_N_FIXED = len(_FIXED_HEADERS)   # 6
+_N_FIXED = len(_FIXED_HEADERS)   # 7
 _N_TAIL  = len(_TAIL_HEADERS)    # 3
 
-# Stable logical indices for fixed columns (never change)
-COL_ARTIST   = 0
-COL_YEAR_REC = 1
-COL_TITLE    = 2
-COL_MEDIA    = 3
-COL_CATALOG  = 4
-COL_YEAR_REL = 5
+COL_PLAY     = 0
+COL_ARTIST   = 1
+COL_YEAR_REC = 2
+COL_TITLE    = 3
+COL_MEDIA    = 4
+COL_CATALOG  = 5
+COL_YEAR_REL = 6
 
-# Tiebreaker columns are always among the fixed ones
 _TIEBREAKER = [COL_ARTIST, COL_YEAR_REC, COL_TITLE]
 
 SETTINGS_KEY = "releases_header_state"
 
-# Default widths for fixed + tail columns
-_FIXED_WIDTHS = [160, 72, 220, 60, 180, 70]
+_FIXED_WIDTHS = [32, 160, 72, 220, 60, 180, 70]
 _TAIL_WIDTHS  = [130, 70, 300]
 _EXTRA_DEFAULT_WIDTH = 90
+
+_AUDIO_EXTENSIONS = {
+    ".flac", ".mp3", ".wav", ".aiff", ".aif", ".m4a", ".alac",
+    ".ogg", ".opus", ".ape", ".wv", ".wma", ".aac", ".dsf", ".dff",
+}
 
 
 def _extras_from_row(row) -> dict:
@@ -47,11 +52,38 @@ def _extras_from_row(row) -> dict:
         return {}
 
 
+def _audio_files(folder_path: str) -> list[Path]:
+    folder = Path(folder_path)
+    return sorted(
+        f for f in folder.iterdir()
+        if f.is_file() and f.suffix.lower() in _AUDIO_EXTENSIONS
+    )
+
+
+def _audio_urls(folder_path: str) -> list[QUrl]:
+    return [QUrl.fromLocalFile(str(f)) for f in _audio_files(folder_path)]
+
+
+def _play_release(folder_path: str, player_path: str):
+    files = [str(f) for f in _audio_files(folder_path)]
+    if not files:
+        return
+    if player_path:
+        subprocess.Popen([player_path] + files)
+    elif platform.system() == "Darwin":
+        subprocess.Popen(["open"] + files)
+    elif platform.system() == "Windows":
+        for f in files:
+            os.startfile(f)
+    else:
+        subprocess.Popen(["xdg-open"] + files)
+
+
 class ReleasesModel(QAbstractTableModel):
     def __init__(self):
         super().__init__()
         self._rows: list = []
-        self._extra_tokens: list[str] = []   # custom token names, in mask order
+        self._extra_tokens: list[str] = []
 
     # ── column helpers ────────────────────────────────────────────────────
 
@@ -60,7 +92,7 @@ class ReleasesModel(QAbstractTableModel):
         return _FIXED_HEADERS + extra_labels + _TAIL_HEADERS
 
     def col_avail(self) -> int:
-        return _N_FIXED + len(self._extra_tokens) + 1   # Source=+0, Available=+1, Path=+2
+        return _N_FIXED + len(self._extra_tokens) + 1
 
     def col_source(self) -> int:
         return _N_FIXED + len(self._extra_tokens)
@@ -96,6 +128,8 @@ class ReleasesModel(QAbstractTableModel):
         n_extra = len(self._extra_tokens)
 
         if role == Qt.DisplayRole:
+            if col == COL_PLAY:
+                return None  # drawn by delegate
             if col < _N_FIXED:
                 return _fixed_value(row, col)
             if col < _N_FIXED + n_extra:
@@ -125,7 +159,6 @@ class ReleasesModel(QAbstractTableModel):
         return Qt.DropAction.CopyAction
 
     def mimeData(self, indexes):
-        # Collect unique rows, only available releases
         seen_rows = set()
         urls = []
         for index in indexes:
@@ -142,6 +175,7 @@ class ReleasesModel(QAbstractTableModel):
 
 
 def _fixed_value(row, col: int) -> str:
+    if col == COL_PLAY:     return ""
     if col == COL_ARTIST:   return row["artist"]
     if col == COL_YEAR_REC: return row["year_recorded"]
     if col == COL_TITLE:    return row["title"]
@@ -149,6 +183,43 @@ def _fixed_value(row, col: int) -> str:
     if col == COL_CATALOG:  return row["catalog_number"] or ""
     if col == COL_YEAR_REL: return row["year_released"] or ""
     return ""
+
+
+class _PlayButtonDelegate(QStyledItemDelegate):
+    def __init__(self, db, parent=None):
+        super().__init__(parent)
+        self._db = db
+
+    def paint(self, painter, option, index):
+        if index.column() != COL_PLAY:
+            super().paint(painter, option, index)
+            return
+
+        row = index.data(Qt.UserRole)
+        if not row or not row["is_available"]:
+            return  # no button for unavailable releases
+
+        painter.save()
+        if option.state & QStyle.State_MouseOver:
+            painter.fillRect(option.rect, option.palette.highlight().color().lighter(175))
+        painter.setPen(option.palette.text().color())
+        painter.drawText(option.rect, Qt.AlignCenter, "▶")
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        if index.column() == COL_PLAY:
+            return QSize(32, 24)
+        return super().sizeHint(option, index)
+
+    def editorEvent(self, event, model, option, index):
+        from PySide6.QtCore import QEvent
+        if index.column() == COL_PLAY and event.type() == QEvent.Type.MouseButtonRelease:
+            row = index.data(Qt.UserRole)
+            if row and row["is_available"]:
+                player = self._db.get_setting("audio_player_path", "")
+                _play_release(row["folder_path"], player)
+            return True
+        return super().editorEvent(event, model, option, index)
 
 
 class _MultiSortProxy(QSortFilterProxyModel):
@@ -161,6 +232,8 @@ class _MultiSortProxy(QSortFilterProxyModel):
         return self.sourceModel()
 
     def sort(self, column: int, order=Qt.AscendingOrder):
+        if column == COL_PLAY:
+            return  # play column is not sortable
         self._primary_col = column if column >= 0 else None
         self._primary_order = order
         super().sort(column, order)
@@ -172,17 +245,16 @@ class _MultiSortProxy(QSortFilterProxyModel):
         def val(index: QModelIndex, col: int) -> tuple:
             if col == avail_col:
                 row = src.data(src.index(index.row(), col), Qt.UserRole)
-                # (0, 0)=Yes < (0, 1)=No  →  ascending puts Yes first
                 return (0, 0 if (row and row["is_available"]) else 1, "")
             raw = (src.data(src.index(index.row(), col)) or "").strip()
             if not raw:
-                return (2, 0.0, "")        # empty → always last
+                return (2, 0.0, "")
             try:
-                return (0, float(raw), "")  # numeric → sort by value
+                return (0, float(raw), "")
             except ValueError:
-                return (1, 0.0, raw.lower())  # text → sort alphabetically
+                return (1, 0.0, raw.lower())
 
-        primary = self._primary_col if self._primary_col is not None else 0
+        primary = self._primary_col if self._primary_col is not None else COL_ARTIST
         lv, rv = val(left, primary), val(right, primary)
         if lv != rv:
             return lv < rv
@@ -195,22 +267,6 @@ class _MultiSortProxy(QSortFilterProxyModel):
                 return lv < rv
 
         return False
-
-
-_AUDIO_EXTENSIONS = {
-    ".flac", ".mp3", ".wav", ".aiff", ".aif", ".m4a", ".alac",
-    ".ogg", ".opus", ".ape", ".wv", ".wma", ".aac", ".dsf", ".dff",
-}
-
-
-def _audio_urls(folder_path: str) -> list[QUrl]:
-    """Return sorted file:// URLs for all audio files in folder_path."""
-    folder = Path(folder_path)
-    files = sorted(
-        f for f in folder.iterdir()
-        if f.is_file() and f.suffix.lower() in _AUDIO_EXTENSIONS
-    )
-    return [QUrl.fromLocalFile(str(f)) for f in files]
 
 
 class _DragTableView(QTableView):
@@ -231,11 +287,15 @@ class _DragTableView(QTableView):
             super().mouseMoveEvent(event)
             return
 
-        if (event.pos() - self._drag_start).manhattanLength() < QApplication.startDragDistance():
-            # Below threshold — swallow the event so Qt never starts rubber-band selection.
+        # Don't start drag from the play button column
+        pressed_index = self.indexAt(self._drag_start)
+        if pressed_index.isValid() and pressed_index.column() == COL_PLAY:
+            super().mouseMoveEvent(event)
             return
 
-        # Threshold reached — build drag manually and execute.
+        if (event.pos() - self._drag_start).manhattanLength() < QApplication.startDragDistance():
+            return
+
         press_pos = self._drag_start
         self._drag_start = None
         self._exec_drag(press_pos)
@@ -245,7 +305,6 @@ class _DragTableView(QTableView):
         if not proxy_index.isValid():
             return
 
-        # Collect all selected rows; if the pressed row isn't among them, use only it.
         selected_proxy_rows = {
             idx.row() for idx in self.selectionModel().selectedRows()
         }
@@ -314,20 +373,25 @@ class ReleasesTab(QWidget):
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
-        self._table.doubleClicked.connect(self._edit_release)
+        self._table.doubleClicked.connect(self._on_double_click)
         self._table.verticalHeader().setVisible(False)
         self._table.setDragEnabled(True)
         self._table.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self._table.setDefaultDropAction(Qt.DropAction.CopyAction)
+        self._table.setMouseTracking(True)  # needed for hover highlight on play button
+
+        self._delegate = _PlayButtonDelegate(self._db, self._table)
+        self._table.setItemDelegate(self._delegate)
 
         hdr = self._table.horizontalHeader()
         hdr.setSectionsMovable(True)
         hdr.setSectionsClickable(True)
         hdr.setStretchLastSection(False)
         hdr.setSectionResizeMode(QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Fixed)
         hdr.setContextMenuPolicy(Qt.CustomContextMenu)
         hdr.customContextMenuRequested.connect(self._show_header_menu)
-        hdr.sectionMoved.connect(self._save_header_state)
+        hdr.sectionMoved.connect(self._on_section_moved)
         hdr.sectionResized.connect(self._save_header_state)
 
         layout.addWidget(self._table)
@@ -356,6 +420,13 @@ class ReleasesTab(QWidget):
 
         layout.addLayout(btn_row)
 
+    # ── Double-click handling ──────────────────────────────────────────────
+
+    def _on_double_click(self, proxy_index):
+        if proxy_index.column() == COL_PLAY:
+            return  # delegate handles single click; ignore double-click
+        self._edit_release()
+
     # ── Header context menu ────────────────────────────────────────────────
 
     def _show_header_menu(self, pos):
@@ -363,7 +434,10 @@ class ReleasesTab(QWidget):
         headers = self._model._all_headers()
         menu = QMenu(self)
         for logical_idx, name in enumerate(headers):
-            action = menu.addAction(name)
+            if logical_idx == COL_PLAY:
+                continue  # play column is always visible, not user-togglable
+            label = name if name else f"Column {logical_idx}"
+            action = menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(not hdr.isSectionHidden(logical_idx))
             action.setData(logical_idx)
@@ -373,6 +447,16 @@ class ReleasesTab(QWidget):
             self._save_header_state()
 
     # ── Header state ───────────────────────────────────────────────────────
+
+    def _on_section_moved(self, logical, old_visual, new_visual):
+        # Prevent the play button column from being moved away from position 0
+        if logical == COL_PLAY and new_visual != 0:
+            self._table.horizontalHeader().moveSection(new_visual, 0)
+            return
+        if new_visual == 0 and logical != COL_PLAY:
+            self._table.horizontalHeader().moveSection(0, old_visual)
+            return
+        self._save_header_state()
 
     def _save_header_state(self, *_):
         state: QByteArray = self._table.horizontalHeader().saveState()
@@ -389,7 +473,6 @@ class ReleasesTab(QWidget):
             pass
 
     def invalidate_header_state(self):
-        """Call when column count changes (e.g. mask changed) so stale state is not restored."""
         self._db.set_setting(SETTINGS_KEY, "")
 
     def _reset_header(self):
@@ -402,6 +485,7 @@ class ReleasesTab(QWidget):
         for i, w in enumerate(_FIXED_WIDTHS):
             hdr.setSectionHidden(i, False)
             hdr.resizeSection(i, w)
+        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Fixed)
         n_extra = len(self._model._extra_tokens)
         for i in range(n_extra):
             col = _N_FIXED + i
@@ -421,7 +505,6 @@ class ReleasesTab(QWidget):
         rows = self._db.get_releases(search=self._search.text().strip())
         prev_n = self._model.columnCount()
         self._model.load(rows, extra_tokens)
-        # If column count changed, apply default widths for new extras
         if self._model.columnCount() != prev_n:
             self._apply_default_widths()
         self._count_label.setText(f"Releases: {len(rows)}")
@@ -430,6 +513,7 @@ class ReleasesTab(QWidget):
         hdr = self._table.horizontalHeader()
         for i, w in enumerate(_FIXED_WIDTHS):
             hdr.resizeSection(i, w)
+        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Fixed)
         n_extra = len(self._model._extra_tokens)
         for i in range(n_extra):
             hdr.resizeSection(_N_FIXED + i, _EXTRA_DEFAULT_WIDTH)

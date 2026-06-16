@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox,
     QRadioButton, QHBoxLayout, QLabel,
     QButtonGroup, QGraphicsOpacityEffect, QPlainTextEdit, QPushButton,
-    QLineEdit,
+    QLineEdit, QFileDialog,
 )
 
 from src.database.db import Database
@@ -131,6 +131,38 @@ class SettingsTab(QWidget):
 
         layout.addWidget(mode_box)
 
+        # ── Audio Player ──────────────────────────────────────────────────
+        player_box = QGroupBox("Audio Player")
+        player_layout = QVBoxLayout(player_box)
+        player_layout.setContentsMargins(12, 8, 12, 12)
+        player_layout.setSpacing(6)
+
+        player_layout.addWidget(_hint(
+            "Path to your audio player executable. Used when clicking ▶ in the Releases table. "
+            "Leave empty to use the system default."
+        ))
+
+        player_row = QHBoxLayout()
+        self._player_edit = QLineEdit()
+        self._player_edit.setPlaceholderText("e.g. /Applications/VLC.app/Contents/MacOS/VLC")
+        self._player_edit.returnPressed.connect(self._save_player)
+        self._player_edit.editingFinished.connect(self._save_player)
+        self._player_browse_btn = QPushButton("Browse…")
+        self._player_browse_btn.setFixedWidth(75)
+        self._player_browse_btn.clicked.connect(self._browse_player)
+        player_row.addWidget(self._player_edit)
+        player_row.addWidget(self._player_browse_btn)
+        player_layout.addLayout(player_row)
+
+        self._player_saved_label = QLabel("")
+        self._player_saved_label.setStyleSheet("color: #4caf50; font-size: 11px;")
+        self._player_saved_timer = QTimer(self)
+        self._player_saved_timer.setSingleShot(True)
+        self._player_saved_timer.timeout.connect(lambda: self._player_saved_label.setText(""))
+        player_layout.addWidget(self._player_saved_label)
+
+        layout.addWidget(player_box)
+
         # ── Log viewer ────────────────────────────────────────────────────
         log_box = QGroupBox("Log")
         log_layout = QVBoxLayout(log_box)
@@ -207,6 +239,37 @@ class SettingsTab(QWidget):
         self._interval_saved_timer.start(2000)
         log.info("Settings: full scan interval set to %d min", value)
 
+    def _save_player(self):
+        path = self._player_edit.text().strip()
+        self._db.set_setting("audio_player_path", path)
+        self._player_edit.clearFocus()
+        self._player_saved_label.setText("Saved")
+        self._player_saved_timer.start(2000)
+        log.info("Settings: audio player set to %r", path)
+
+    def _browse_player(self):
+        import platform
+        if platform.system() == "Darwin":
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Select Audio Player", "/Applications"
+            )
+        else:
+            path, _ = QFileDialog.getOpenFileName(self, "Select Audio Player")
+        if path:
+            # On macOS, if user picks a .app bundle, point to the executable inside
+            if path.endswith(".app"):
+                import os
+                from pathlib import Path
+                macos_dir = Path(path) / "Contents" / "MacOS"
+                executables = [
+                    f for f in macos_dir.iterdir()
+                    if f.is_file() and os.access(str(f), os.X_OK)
+                ] if macos_dir.exists() else []
+                if executables:
+                    path = str(executables[0])
+            self._player_edit.setText(path)
+            self._save_player()
+
     def _validate_and_preview(self):
         mask = self._mask_edit.text().strip() or DEFAULT_MASK
         saved = self._db.get_setting("folder_mask", DEFAULT_MASK)
@@ -264,6 +327,10 @@ class SettingsTab(QWidget):
             w.blockSignals(False)
 
         self._interval_edit.setText(self._db.get_setting("scan_interval_min", "60"))
+
+        self._player_edit.blockSignals(True)
+        self._player_edit.setText(self._db.get_setting("audio_player_path", ""))
+        self._player_edit.blockSignals(False)
 
         saved_mask = self._db.get_setting("folder_mask", DEFAULT_MASK)
         self._mask_edit.blockSignals(True)

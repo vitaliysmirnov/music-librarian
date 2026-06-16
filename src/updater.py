@@ -13,14 +13,10 @@ _RELEASES_API = "https://api.github.com/repos/vitaliysmirnov/music-librarian/rel
 _TIMEOUT = 8
 
 
-def _parse_version(v: str) -> tuple:
-    try:
-        return tuple(int(x) for x in v.lstrip("v").split("."))
-    except ValueError:
-        return (0,)
-
-
 def _fetch_latest() -> dict | None:
+    if __version__ == "dev":
+        return None  # no update checks for dev builds
+
     try:
         req = urllib.request.Request(
             _RELEASES_API,
@@ -28,11 +24,12 @@ def _fetch_latest() -> dict | None:
         )
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
             data = json.loads(r.read())
-        latest = data["tag_name"]
-        if _parse_version(latest) > _parse_version(__version__):
+        latest_tag = data["tag_name"]          # e.g. "v0.0.5"
+        current_tag = f"v{__version__}"        # e.g. "v0.0.4"
+        if latest_tag != current_tag:
             return {
-                "version": latest.lstrip("v"),
-                "tag":     latest,
+                "version": latest_tag.lstrip("v"),
+                "tag":     latest_tag,
                 "notes":   (data.get("body") or "").strip(),
                 "url":     data["html_url"],
             }

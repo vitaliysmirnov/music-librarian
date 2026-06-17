@@ -640,7 +640,7 @@ class ReleasesTab(QWidget):
 
     def _edit_release(self, *_):
         row = self._selected_row()
-        if not row:
+        if not row or not row["is_available"]:
             return
         dlg = EditReleaseDialog(self._db, row, self)
         if dlg.exec() == EditReleaseDialog.Accepted:

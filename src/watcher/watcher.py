@@ -1,5 +1,6 @@
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 from watchdog.events import (
@@ -16,6 +17,11 @@ from src.scanner.parser import parse_folder_name
 from src.utils.logger import get_logger
 
 log = get_logger()
+
+
+def _norm(path: str) -> str:
+    """Normalise path to NFC Unicode form (watchdog on macOS may deliver NFD)."""
+    return unicodedata.normalize("NFC", path)
 
 
 def _load_pattern(db: Database) -> re.Pattern:
@@ -65,9 +71,10 @@ class _ReleaseEventHandler(FileSystemEventHandler):
     def on_created(self, event):
         if not isinstance(event, DirCreatedEvent):
             return
-        if not _is_release_path(event.src_path, self._source_path, self._pattern):
+        src = _norm(event.src_path)
+        if not _is_release_path(src, self._source_path, self._pattern):
             return
-        parsed = parse_folder_name(Path(event.src_path).name, self._pattern)
+        parsed = parse_folder_name(Path(src).name, self._pattern)
         if not parsed:
             return
         self._db.upsert_release(
@@ -78,33 +85,36 @@ class _ReleaseEventHandler(FileSystemEventHandler):
             catalog_number=parsed.catalog_number,
             media=parsed.media,
             year_released=parsed.year_released,
-            folder_path=event.src_path,
+            folder_path=src,
             extras=parsed.extras,
         )
-        log.info("Watcher: added release: %s", event.src_path)
+        log.info("Watcher: added release: %s", src)
         self._on_change()
 
     def on_deleted(self, event):
         if not isinstance(event, DirDeletedEvent):
             return
-        if not _parent_is_source_or_artist(event.src_path, self._source_path):
+        src = _norm(event.src_path)
+        if not _parent_is_source_or_artist(src, self._source_path):
             return
-        self._db.delete_release_by_path(event.src_path)
-        log.info("Watcher: deleted release: %s", event.src_path)
+        self._db.delete_release_by_path(src)
+        log.info("Watcher: deleted release: %s", src)
         self._on_change()
 
     def on_moved(self, event):
         if not isinstance(event, DirMovedEvent):
             return
-        src_is_release = _is_release_path(event.src_path, self._source_path, self._pattern)
-        dst_is_release = _is_release_path(event.dest_path, self._source_path, self._pattern)
+        src = _norm(event.src_path)
+        dst = _norm(event.dest_path)
+        src_is_release = _is_release_path(src, self._source_path, self._pattern)
+        dst_is_release = _is_release_path(dst, self._source_path, self._pattern)
 
         if src_is_release and dst_is_release:
-            parsed = parse_folder_name(Path(event.dest_path).name, self._pattern)
+            parsed = parse_folder_name(Path(dst).name, self._pattern)
             if parsed:
                 self._db.rename_release(
-                    event.src_path,
-                    event.dest_path,
+                    src,
+                    dst,
                     artist=parsed.artist,
                     year_recorded=parsed.year_recorded,
                     title=parsed.title,
@@ -113,19 +123,19 @@ class _ReleaseEventHandler(FileSystemEventHandler):
                     year_released=parsed.year_released,
                     extras=json.dumps(parsed.extras, ensure_ascii=False),
                 )
-                log.info("Watcher: renamed: %s → %s", event.src_path, event.dest_path)
+                log.info("Watcher: renamed: %s → %s", src, dst)
             else:
-                self._db.delete_release_by_path(event.src_path)
-                log.info("Watcher: renamed to unparseable, removed: %s", event.src_path)
+                self._db.delete_release_by_path(src)
+                log.info("Watcher: renamed to unparseable, removed: %s", src)
             self._on_change()
 
         elif src_is_release:
-            self._db.delete_release_by_path(event.src_path)
-            log.info("Watcher: release moved out: %s", event.src_path)
+            self._db.delete_release_by_path(src)
+            log.info("Watcher: release moved out: %s", src)
             self._on_change()
 
         elif dst_is_release:
-            parsed = parse_folder_name(Path(event.dest_path).name, self._pattern)
+            parsed = parse_folder_name(Path(dst).name, self._pattern)
             if parsed:
                 self._db.upsert_release(
                     source_id=self._source_id,
@@ -135,10 +145,10 @@ class _ReleaseEventHandler(FileSystemEventHandler):
                     catalog_number=parsed.catalog_number,
                     media=parsed.media,
                     year_released=parsed.year_released,
-                    folder_path=event.dest_path,
+                    folder_path=dst,
                     extras=parsed.extras,
                 )
-                log.info("Watcher: release moved in: %s", event.dest_path)
+                log.info("Watcher: release moved in: %s", dst)
                 self._on_change()
 
 

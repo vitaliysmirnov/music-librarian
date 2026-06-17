@@ -6,12 +6,12 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QSortFilterProxyModel, QUrl, QMimeData, QPoint, QSize
-from PySide6.QtGui import QColor, QDrag
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QSortFilterProxyModel, QUrl, QMimeData, QPoint, QSize, Signal
+from PySide6.QtGui import QColor, QDrag, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel,
     QPushButton, QTableView, QHeaderView, QAbstractItemView, QMenu,
-    QApplication, QStyledItemDelegate, QStyle,
+    QApplication, QStyledItemDelegate, QStyle, QMessageBox,
 )
 
 from src.scanner.mask import DEFAULT_MASK, KNOWN_TOKENS, get_custom_tokens
@@ -95,6 +95,44 @@ def _audio_files(folder_path: str) -> list[Path]:
 
 def _audio_urls(folder_path: str) -> list[QUrl]:
     return [QUrl.fromLocalFile(str(f)) for f in _audio_files(folder_path)]
+
+
+def _move_to_trash(path: str):
+    """Move *path* to the system Trash (recoverable). Raises on failure."""
+    if platform.system() == "Darwin":
+        from AppKit import NSFileManager, NSURL  # pyobjc-framework-Cocoa
+        url = NSURL.fileURLWithPath_(path)
+        ok, _, err = NSFileManager.defaultManager().trashItemAtURL_resultingItemURL_error_(
+            url, None, None
+        )
+        if not ok:
+            raise OSError(str(err))
+    elif platform.system() == "Windows":
+        import ctypes
+        # SHFileOperation with FO_DELETE + FOF_ALLOWUNDO moves to Recycle Bin
+        from ctypes import wintypes
+        class SHFILEOPSTRUCT(ctypes.Structure):
+            _fields_ = [
+                ("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT),
+                ("pFrom", wintypes.LPCWSTR), ("pTo", wintypes.LPCWSTR),
+                ("fFlags", wintypes.WORD), ("fAnyOperationsAborted", wintypes.BOOL),
+                ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR),
+            ]
+        FO_DELETE = 3
+        FOF_ALLOWUNDO = 0x0040
+        FOF_NOCONFIRMATION = 0x0010
+        FOF_SILENT = 0x0004
+        op = SHFILEOPSTRUCT()
+        op.wFunc = FO_DELETE
+        op.pFrom = path + "\0\0"
+        op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT
+        result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+        if result:
+            raise OSError(f"SHFileOperation failed: {result}")
+    else:
+        result = subprocess.run(["gio", "trash", path], capture_output=True)
+        if result.returncode != 0:
+            raise OSError(result.stderr.decode())
 
 
 def _play_release(folder_path: str, player_path: str):
@@ -385,6 +423,8 @@ class _DragTableView(QTableView):
 
 
 class ReleasesTab(QWidget):
+    release_trashed = Signal()
+
     def __init__(self, db):
         super().__init__()
         self._db = db
@@ -445,6 +485,11 @@ class ReleasesTab(QWidget):
 
 
         layout.addWidget(self._table)
+
+        # Command+Backspace (macOS) / Ctrl+Backspace (other platforms) → move to Trash
+        trash_sc = QShortcut(QKeySequence("Ctrl+Backspace"), self._table)
+        trash_sc.setContext(Qt.WidgetWithChildrenShortcut)
+        trash_sc.activated.connect(self._trash_release)
 
         btn_row = QHBoxLayout()
 
@@ -611,3 +656,33 @@ class ReleasesTab(QWidget):
                 os.startfile(p)
             else:
                 subprocess.Popen(["xdg-open", p])
+
+    def _trash_release(self):
+        row = self._selected_row()
+        if not row:
+            return
+
+        folder_path = row["folder_path"]
+        folder_exists = Path(folder_path).exists()
+        artist = row.get("artist", "")
+        title = row.get("title", "")
+        label = f"{artist} — {title}" if artist and title else folder_path
+
+        if folder_exists:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Move to Trash")
+            msg.setText(f"Move to Trash:\n{label}")
+            msg.setInformativeText("The folder will be moved to the Trash. This can be undone.")
+            msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+            msg.setDefaultButton(QMessageBox.Cancel)
+            if msg.exec() != QMessageBox.Ok:
+                return
+            try:
+                _move_to_trash(folder_path)
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Could not move to Trash:\n{e}")
+                return
+
+        self._db.delete_release_by_path(folder_path)
+        self.refresh()
+        self.release_trashed.emit()

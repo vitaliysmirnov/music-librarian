@@ -102,6 +102,7 @@ class MainWindow(QMainWindow):
         self._sources_tab.sources_changed.connect(self._on_sources_changed)
         self._settings_tab.settings_changed.connect(self._apply_settings)
         self._settings_tab.mask_changed.connect(self._on_mask_changed)
+        self._releases_tab.release_trashed.connect(self._update_info_label)
 
         sb = QStatusBar()
         self.setStatusBar(sb)
@@ -288,9 +289,22 @@ class MainWindow(QMainWindow):
                 newly_gone.append(source)
 
         for source in newly_gone:
-            log.info("Drive gone offline: %s", source["path"])
-            self._db.update_source_availability(source["id"], False)
-            self._db.set_releases_availability_by_source(source["id"], False)
+            src_path = Path(source["path"])
+            if src_path.parent.exists():
+                # Source directory itself was deleted — remove orphaned releases.
+                log.info("Source directory deleted: %s", source["path"])
+                self._db.update_source_availability(source["id"], False)
+                for path in self._db.get_release_paths_for_source(source["id"]):
+                    if not Path(path).exists():
+                        self._db.delete_release_by_path(path)
+                        log.info("Removed release (source deleted): %s", path)
+                    else:
+                        self._db.set_release_availability(path, False)
+            else:
+                # Parent also missing → drive likely offline.
+                log.info("Drive gone offline: %s", source["path"])
+                self._db.update_source_availability(source["id"], False)
+                self._db.set_releases_availability_by_source(source["id"], False)
             if self._watcher:
                 self._watcher.refresh_watches()
 

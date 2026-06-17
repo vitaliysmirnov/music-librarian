@@ -218,15 +218,14 @@ class SettingsTab(QWidget):
         self._log_handler.signals.record_emitted.connect(self._append_log_line)
 
     def _append_log_line(self, level: str, message: str):
+        fmt = QTextCharFormat()
         color = _LEVEL_COLORS.get(level)
         if color:
-            fmt = QTextCharFormat()
             fmt.setForeground(QColor(color))
-            cursor = self._log_view.textCursor()
-            cursor.movePosition(cursor.MoveOperation.End)
-            cursor.insertText(message + "\n", fmt)
-        else:
-            self._log_view.appendPlainText(message)
+        cursor = self._log_view.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        cursor.insertText(message + "\n", fmt)
+        self._log_view.setTextCursor(cursor)
         self._log_view.verticalScrollBar().setValue(
             self._log_view.verticalScrollBar().maximum()
         )

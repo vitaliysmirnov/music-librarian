@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from pathlib import Path
 
 from src.database.db import Database
@@ -7,6 +8,16 @@ from src.scanner.parser import parse_folder_name
 from src.utils.logger import get_logger
 
 log = get_logger()
+
+
+def _norm(path: str) -> str:
+    """Normalize a path to NFC Unicode form.
+
+    On macOS HFS+/APFS the filesystem uses NFD; watchdog may deliver NFD paths
+    while Python iterdir() produces NFC.  Normalising to a single form prevents
+    spurious mismatches when comparing scanner results against stored paths.
+    """
+    return unicodedata.normalize("NFC", path)
 
 
 def _load_pattern(db: Database) -> re.Pattern:
@@ -52,14 +63,32 @@ def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, in
     root = Path(source_path)
     if not root.exists():
         db.update_source_availability(source_id, False)
-        db.set_releases_availability_by_source(source_id, False)
-        log.warning("Source not available: %s", source_path)
-        return 0, 0, 0
+        if root.parent.exists():
+            # Parent is still there → the source directory itself was deleted,
+            # not a drive disconnection.  Remove releases whose folders are gone.
+            removed = 0
+            for path in db.get_release_paths_for_source(source_id):
+                if not Path(_norm(path)).exists():
+                    db.delete_release_by_path(path)
+                    log.info("Removed release (source deleted): %s", path)
+                    removed += 1
+                else:
+                    db.set_release_availability(path, False)
+            log.warning("Source directory deleted: %s", source_path)
+            return 0, 0, removed
+        else:
+            # Parent missing too → likely a drive/mount gone offline.
+            # Keep releases as unavailable so they reappear when drive returns.
+            db.set_releases_availability_by_source(source_id, False)
+            log.warning("Source not available (drive offline?): %s", source_path)
+            return 0, 0, 0
 
     db.update_source_availability(source_id, True)
     pattern = _load_pattern(db)
 
-    known_paths = db.get_release_paths_for_source(source_id)
+    # Normalise stored paths to NFC so comparisons are stable across NFD/NFC
+    # variants that macOS / watchdog may produce.
+    known_paths = {_norm(p) for p in db.get_release_paths_for_source(source_id)}
     found_paths: set[str] = set()
     added = updated = 0
 
@@ -68,7 +97,7 @@ def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, in
         if not parsed:
             continue
 
-        path_str = str(entry)
+        path_str = _norm(str(entry))
         found_paths.add(path_str)
 
         existing = db.get_release_by_path(path_str)
@@ -92,12 +121,20 @@ def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, in
     removed_paths = known_paths - found_paths
     removed = 0
     for path in removed_paths:
-        if not Path(path).exists():
+        truly_exists = False
+        try:
+            Path(path).resolve(strict=True)
+            truly_exists = True
+        except OSError:
+            pass
+        if not truly_exists:
             db.delete_release_by_path(path)
             log.info("Removed release (folder gone): %s", path)
             removed += 1
         else:
+            # Folder exists but no longer matches the mask (e.g. renamed).
             db.set_release_availability(path, False)
+            log.debug("Release no longer matched by scanner (folder exists): %s", path)
 
     db.update_source_last_scan(source_id)
     log.info(

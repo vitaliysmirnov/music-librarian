@@ -9,6 +9,13 @@ from src.utils.logger import get_logger
 
 log = get_logger()
 
+_AUDIO_EXTENSIONS = {
+    ".flac", ".mp3", ".wav", ".aiff", ".aif", ".m4a", ".alac",
+    ".ogg", ".opus", ".ape", ".wv", ".wma", ".aac", ".dsf", ".dff",
+}
+
+_IGNORED_SUBDIR_NAMES = {"artwork", "cover", "media"}
+
 
 def _norm(path: str) -> str:
     """Normalize a path to NFC Unicode form.
@@ -58,6 +65,26 @@ def _iter_release_dirs(root: Path, pattern: re.Pattern):
                 log.warning("Permission denied: %s", entry)
 
 
+def _disc_subdirs(entry: Path) -> list[Path]:
+    """Return sorted non-ignored subdirectories of a potential multi-disc container."""
+    try:
+        items = list(entry.iterdir())
+    except PermissionError:
+        return []
+    has_audio = any(
+        f.is_file() and f.suffix.lower() in _AUDIO_EXTENSIONS for f in items
+    )
+    if has_audio:
+        return []
+    return sorted(
+        d for d in items
+        if d.is_dir()
+        and d.name.lower() not in _IGNORED_SUBDIR_NAMES
+        and not d.name.startswith(".")
+        and not d.name.startswith("_")
+    )
+
+
 def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, int, int]:
     """Scan one source directory. Returns (added, updated, removed) counts."""
     root = Path(source_path)
@@ -100,6 +127,8 @@ def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, in
         path_str = _norm(str(entry))
         found_paths.add(path_str)
 
+        disc_dirs = _disc_subdirs(entry)
+        is_multi = bool(disc_dirs)
         existing = db.get_release_by_path(path_str)
         db.upsert_release(
             source_id=source_id,
@@ -111,9 +140,32 @@ def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, in
             year_released=parsed.year_released,
             folder_path=path_str,
             extras=parsed.extras,
+            disc_number=0 if is_multi else 1,
+            is_multi_disc=is_multi,
+            parent_path=None,
         )
+        if is_multi:
+            # Rebuild disc child entries from scratch on every scan
+            db.delete_disc_entries_for_parent(path_str)
+            for disc_num, disc_dir in enumerate(disc_dirs, 1):
+                disc_path = _norm(str(disc_dir))
+                db.upsert_release(
+                    source_id=source_id,
+                    artist=parsed.artist,
+                    year_recorded=parsed.year_recorded,
+                    title=parsed.title,
+                    catalog_number=parsed.catalog_number,
+                    media=parsed.media,
+                    year_released=parsed.year_released,
+                    folder_path=disc_path,
+                    extras=parsed.extras,
+                    disc_number=disc_num,
+                    is_multi_disc=False,
+                    parent_path=path_str,
+                )
+                log.debug("  disc %d: %s", disc_num, disc_dir.name)
         if existing is None:
-            log.info("Added release: %s", entry.name)
+            log.info("Added release%s: %s", " (multi-disc)" if is_multi else "", entry.name)
             added += 1
         else:
             updated += 1

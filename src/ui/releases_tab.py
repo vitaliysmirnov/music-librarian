@@ -47,8 +47,8 @@ _TOKEN_DB_KEY: dict[str, str] = {
     "year_released":  "year_released",
 }
 
-_TAIL_HEADERS = ["Source", "Available", "Path"]
-_TAIL_WIDTHS  = [130, 70, 300]
+_TAIL_HEADERS = ["Disc", "Source", "Available", "Path"]
+_TAIL_WIDTHS  = [40, 130, 70, 300]
 
 _TIEBREAKER_TOKENS = ["artist", "year_recorded", "title"]
 
@@ -194,14 +194,17 @@ class ReleasesModel(QAbstractTableModel):
         """Return the logical column index for a known token (1-based after COL_PLAY)."""
         return 1 + self._token_order.index(token)
 
-    def _col_avail(self) -> int:
-        return 1 + self._n_known() + len(self._extra_tokens) + 1
-
-    def _col_source(self) -> int:
+    def _col_disc(self) -> int:
         return 1 + self._n_known() + len(self._extra_tokens)
 
-    def _col_path(self) -> int:
+    def _col_source(self) -> int:
+        return 1 + self._n_known() + len(self._extra_tokens) + 1
+
+    def _col_avail(self) -> int:
         return 1 + self._n_known() + len(self._extra_tokens) + 2
+
+    def _col_path(self) -> int:
+        return 1 + self._n_known() + len(self._extra_tokens) + 3
 
     def _all_headers(self) -> list[str]:
         known_hdrs  = [_TOKEN_HEADER[t] for t in self._token_order]
@@ -212,7 +215,7 @@ class ReleasesModel(QAbstractTableModel):
 
     def load(self, rows, token_order: list[str], extra_tokens: list[str]):
         self.beginResetModel()
-        self._rows = [dict(r) for r in rows]
+        self._rows = [r if isinstance(r, dict) else dict(r) for r in rows]
         self._token_order = token_order
         self._extra_tokens = extra_tokens
         self.endResetModel()
@@ -248,11 +251,16 @@ class ReleasesModel(QAbstractTableModel):
                 token = self._extra_tokens[extra_i]
                 return _extras_from_row(row).get(token, "")
             tail = col - 1 - n_kn - n_ex
-            if tail == 0:
-                return Path(row["source_path"]).name
+            if tail == 0:                        # Disc
+                if row.get("is_multi_disc"):
+                    return ""
+                dn = row.get("disc_number") or 1
+                return str(dn)
             if tail == 1:
-                return "Yes" if row["is_available"] else "No"
+                return Path(row["source_path"]).name
             if tail == 2:
+                return "Yes" if row["is_available"] else "No"
+            if tail == 3:
                 return row["folder_path"]
 
         if role == Qt.ForegroundRole and not row["is_available"]:
@@ -279,7 +287,7 @@ class ReleasesModel(QAbstractTableModel):
                 continue
             seen_rows.add(row_i)
             row = self._rows[row_i]
-            if row["is_available"]:
+            if row["is_available"] and not row.get("is_multi_disc"):
                 urls.append(QUrl.fromLocalFile(row["folder_path"]))
         mime = QMimeData()
         mime.setUrls(urls)
@@ -287,9 +295,10 @@ class ReleasesModel(QAbstractTableModel):
 
 
 class _PlayButtonDelegate(QStyledItemDelegate):
-    def __init__(self, db, parent=None):
+    def __init__(self, db, toggle_expand_cb=None, parent=None):
         super().__init__(parent)
         self._db = db
+        self._toggle_expand_cb = toggle_expand_cb
 
     def paint(self, painter, option, index):
         if index.column() != COL_PLAY:
@@ -297,14 +306,21 @@ class _PlayButtonDelegate(QStyledItemDelegate):
             return
 
         row = index.data(Qt.UserRole)
-        if not row or not row["is_available"]:
+        if not row:
+            return
+
+        if row.get("is_multi_disc"):
+            icon = "▾" if row.get("_is_expanded") else "▸"
+        elif row["is_available"]:
+            icon = "▶"
+        else:
             return
 
         painter.save()
         if option.state & QStyle.State_MouseOver:
             painter.fillRect(option.rect, option.palette.highlight().color().lighter(175))
         painter.setPen(option.palette.text().color())
-        painter.drawText(option.rect, Qt.AlignCenter, "▶")
+        painter.drawText(option.rect, Qt.AlignCenter, icon)
         painter.restore()
 
     def sizeHint(self, option, index):
@@ -316,9 +332,13 @@ class _PlayButtonDelegate(QStyledItemDelegate):
         from PySide6.QtCore import QEvent
         if index.column() == COL_PLAY and event.type() == QEvent.Type.MouseButtonRelease:
             row = index.data(Qt.UserRole)
-            if row and row["is_available"]:
-                player = self._db.get_setting("audio_player_path", "")
-                _play_release(row["folder_path"], player)
+            if row:
+                if row.get("is_multi_disc"):
+                    if self._toggle_expand_cb:
+                        self._toggle_expand_cb(row["folder_path"])
+                elif row["is_available"]:
+                    player = self._db.get_setting("audio_player_path", "")
+                    _play_release(row["folder_path"], player)
             return True
         return super().editorEvent(event, model, option, index)
 
@@ -342,6 +362,9 @@ class _MultiSortProxy(QSortFilterProxyModel):
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
         src = self._src()
         avail_col = src._col_avail()
+
+        left_row  = src.data(src.index(left.row(),  COL_PLAY), Qt.UserRole)
+        right_row = src.data(src.index(right.row(), COL_PLAY), Qt.UserRole)
 
         def val(index: QModelIndex, col: int) -> tuple:
             if col == avail_col:
@@ -369,7 +392,10 @@ class _MultiSortProxy(QSortFilterProxyModel):
             if lv != rv:
                 return lv < rv
 
-        return False
+        # Final tiebreaker: disc_number — containers (0) sort before disc children (1, 2, …)
+        lv_dn = (left_row.get("disc_number") or 0) if left_row else 0
+        rv_dn = (right_row.get("disc_number") or 0) if right_row else 0
+        return lv_dn < rv_dn
 
 
 class _DragTableView(QTableView):
@@ -417,7 +443,7 @@ class _DragTableView(QTableView):
                 self.model().index(proxy_row, 0)
             )
             row = source_model.get_row(source_index.row())
-            if row and row["is_available"]:
+            if row and row["is_available"] and not row.get("is_multi_disc"):
                 urls.extend(_audio_urls(row["folder_path"]))
 
         if not urls:
@@ -440,6 +466,7 @@ class ReleasesTab(QWidget):
     def __init__(self, db):
         super().__init__()
         self._db = db
+        self._expanded: set[str] = set()
         self._setup_ui()
         self._restore_header_state()
 
@@ -482,7 +509,9 @@ class ReleasesTab(QWidget):
         self._table.setContextMenuPolicy(Qt.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_context_menu)
 
-        self._delegate = _PlayButtonDelegate(self._db, self._table)
+        self._delegate = _PlayButtonDelegate(
+            self._db, toggle_expand_cb=self._toggle_expand, parent=self._table
+        )
         self._table.setItemDelegate(self._delegate)
 
         hdr = self._table.horizontalHeader()
@@ -562,6 +591,7 @@ class ReleasesTab(QWidget):
             return
 
         available = bool(row["is_available"])
+        is_container = bool(row.get("is_multi_disc"))
         player_path = self._db.get_setting("audio_player_path", "").strip()
 
         menu = QMenu(self)
@@ -569,7 +599,7 @@ class ReleasesTab(QWidget):
         if player_path:
             player_name = Path(player_path.rstrip("/")).stem or player_path
             act_play = menu.addAction(f"Play with {player_name}")
-            act_play.setEnabled(available)
+            act_play.setEnabled(available and not is_container)
         else:
             act_play = None
 
@@ -659,23 +689,45 @@ class ReleasesTab(QWidget):
 
     # ── Data ───────────────────────────────────────────────────────────────
 
+    def _toggle_expand(self, folder_path: str):
+        if folder_path in self._expanded:
+            self._expanded.discard(folder_path)
+        else:
+            self._expanded.add(folder_path)
+        self.refresh()
+
     def refresh(self):
         mask = self._db.get_setting("folder_mask", DEFAULT_MASK)
         token_order  = _known_token_order(mask)
         extra_tokens = get_custom_tokens(mask)
-        rows = self._db.get_releases(search=self._search.text().strip())
+        top_rows = self._db.get_releases(search=self._search.text().strip())
+
+        flat: list[dict] = []
+        for raw in top_rows:
+            row = dict(raw)
+            if row.get("is_multi_disc"):
+                expanded = row["folder_path"] in self._expanded
+                row["_is_expanded"] = expanded
+                flat.append(row)
+                if expanded:
+                    for child_raw in self._db.get_disc_entries(row["folder_path"]):
+                        child = dict(child_raw)
+                        child["_is_disc_child"] = True
+                        flat.append(child)
+            else:
+                row["_is_expanded"] = False
+                flat.append(row)
+
         prev_n = self._model.columnCount()
-        self._model.load(rows, token_order, extra_tokens)
+        self._model.load(flat, token_order, extra_tokens)
         if self._model.columnCount() != prev_n:
             self._apply_default_widths()
         else:
-            # beginResetModel resets header section sizes; restore saved state.
             self._restore_header_state()
-        # Always enforce play column — restore may have overwritten it.
         hdr = self._table.horizontalHeader()
         hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
         hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
-        self._count_label.setText(f"Releases: {len(rows)}")
+        self._count_label.setText(f"Releases: {len(top_rows)}")
 
     def _apply_default_widths(self):
         hdr = self._table.horizontalHeader()
@@ -698,7 +750,9 @@ class ReleasesTab(QWidget):
 
     def _edit_release(self, *_):
         row = self._selected_row()
-        if not row or not row["is_available"]:
+        if not row:
+            return
+        if not row["is_available"]:
             return
         dlg = EditReleaseDialog(self._db, row, self)
         if dlg.exec() == EditReleaseDialog.Accepted:
@@ -718,6 +772,13 @@ class ReleasesTab(QWidget):
     def _trash_release(self):
         row = self._selected_row()
         if not row:
+            return
+
+        if row.get("_is_disc_child"):
+            QMessageBox.information(
+                self, "Move to Trash",
+                "Select the parent release to delete a multi-disc release."
+            )
             return
 
         folder_path = row["folder_path"]

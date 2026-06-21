@@ -45,6 +45,7 @@ class EditReleaseDialog(QDialog):
         self._mask = db.get_setting("folder_mask", DEFAULT_MASK)
         self._extra_tokens = get_custom_tokens(self._mask)
         self._extras_current = _load_extras(release)
+        self._is_disc_child = bool(release.get("parent_path"))
         self.setWindowTitle("Edit Release")
         self.setMinimumWidth(480)
         self._setup_ui()
@@ -74,6 +75,15 @@ class EditReleaseDialog(QDialog):
         form.addRow("Cat. No.:", self._catalog)
         form.addRow("Media:", self._media)
         form.addRow("Rel. Year:", self._year_released)
+
+        if not self._release.get("is_multi_disc"):
+            disc_num = self._release.get("disc_number") or 1
+            self._disc_number: QLineEdit | None = QLineEdit(str(disc_num))
+            self._disc_number.setMaxLength(2)
+            self._disc_number.setFixedWidth(50)
+            form.addRow("Disc #:", self._disc_number)
+        else:
+            self._disc_number = None
 
         # Dynamic extra fields from current mask
         self._extra_edits: dict[str, QLineEdit] = {}
@@ -118,8 +128,12 @@ class EditReleaseDialog(QDialog):
 
     def _update_preview(self):
         fields = self._all_fields()
-        name = _build_folder_name(fields, self._mask)
-        self._preview.setText(f"Folder: {name}")
+        parent_name = _build_folder_name(fields, self._mask)
+        if self._is_disc_child:
+            child_name = Path(self._release["folder_path"]).name
+            self._preview.setText(f"Folder: {parent_name}/{child_name}")
+        else:
+            self._preview.setText(f"Folder: {parent_name}")
 
     def _on_save(self):
         fields = self._all_fields()
@@ -142,19 +156,39 @@ class EditReleaseDialog(QDialog):
             QMessageBox.warning(self, "Error", "Release year must be a 4-digit number.")
             return
 
-        # Build extras dict from extra token fields
         extras = {token: fields[token] for token in self._extra_tokens if fields.get(token)}
+        extras_json = json.dumps(extras)
 
+        disc_number = 1
+        if self._disc_number is not None:
+            try:
+                disc_number = max(1, int(self._disc_number.text().strip() or "1"))
+            except ValueError:
+                pass
+
+        if self._is_disc_child:
+            self._save_disc_child(artist, year_recorded, title, catalog, media,
+                                  year_released, extras_json, disc_number)
+        else:
+            self._save_regular(artist, year_recorded, title, catalog, media,
+                               year_released, extras_json, disc_number)
+
+    def _save_regular(self, artist, year_recorded, title, catalog, media,
+                      year_released, extras_json, disc_number):
         old_path = Path(self._release["folder_path"])
-        new_name = _build_folder_name(fields, self._mask)
+        new_name = _build_folder_name(
+            {"artist": artist, "year_recorded": year_recorded, "title": title,
+             "catalog_number": catalog or "", "media": media or "",
+             "year_released": year_released or "", **{t: self._extra_edits[t].text().strip()
+                                                       for t in self._extra_edits}},
+            self._mask,
+        )
         new_path = old_path.parent / new_name
 
         if self._release["is_available"] and old_path.name != new_name:
             if new_path.exists():
-                QMessageBox.warning(
-                    self, "Error",
-                    f"A folder with that name already exists:\n{new_name}"
-                )
+                QMessageBox.warning(self, "Error",
+                                    f"A folder with that name already exists:\n{new_name}")
                 return
             try:
                 old_path.rename(new_path)
@@ -166,14 +200,62 @@ class EditReleaseDialog(QDialog):
             new_path = old_path
 
         self._db.rename_release(
-            str(old_path),
-            str(new_path),
-            artist=artist,
-            year_recorded=year_recorded,
-            title=title,
-            catalog_number=catalog,
-            media=media,
-            year_released=year_released,
-            extras=json.dumps(extras),
+            str(old_path), str(new_path),
+            artist=artist, year_recorded=year_recorded, title=title,
+            catalog_number=catalog, media=media, year_released=year_released,
+            extras=extras_json, disc_number=disc_number,
         )
+        self.accept()
+
+    def _save_disc_child(self, artist, year_recorded, title, catalog, media,
+                         year_released, extras_json, disc_number):
+        parent_path_str = self._release["parent_path"]
+        parent_row = self._db.get_release_by_path(parent_path_str)
+        if not parent_row:
+            self.accept()
+            return
+
+        old_parent = Path(parent_path_str)
+        new_parent_name = _build_folder_name(
+            {"artist": artist, "year_recorded": year_recorded, "title": title,
+             "catalog_number": catalog or "", "media": media or "",
+             "year_released": year_released or "", **{t: self._extra_edits[t].text().strip()
+                                                       for t in self._extra_edits}},
+            self._mask,
+        )
+        new_parent = old_parent.parent / new_parent_name
+
+        if parent_row["is_available"] and old_parent.name != new_parent_name:
+            if new_parent.exists():
+                QMessageBox.warning(self, "Error",
+                                    f"A folder with that name already exists:\n{new_parent_name}")
+                return
+            try:
+                old_parent.rename(new_parent)
+                log.info("Folder renamed: %s → %s", old_parent, new_parent)
+            except OSError as e:
+                QMessageBox.warning(self, "Rename Error", str(e))
+                return
+        else:
+            new_parent = old_parent
+
+        # Update parent metadata + disc children paths in DB
+        self._db.rename_release(
+            str(old_parent), str(new_parent),
+            artist=artist, year_recorded=year_recorded, title=title,
+            catalog_number=catalog, media=media, year_released=year_released,
+            extras=extras_json, disc_number=0,
+        )
+        # Propagate metadata to all disc children (artist, title, etc.)
+        self._db.update_disc_children_metadata(
+            str(new_parent),
+            artist=artist, year_recorded=year_recorded, title=title,
+            catalog_number=catalog, media=media, year_released=year_released,
+            extras=extras_json,
+        )
+        # Update disc_number for this specific disc child (path may have changed)
+        child_name = Path(self._release["folder_path"]).name
+        new_child_path = str(new_parent / child_name)
+        self._db.rename_release(new_child_path, new_child_path, disc_number=disc_number)
+
         self.accept()

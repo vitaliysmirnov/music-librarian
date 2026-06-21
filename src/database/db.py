@@ -80,10 +80,15 @@ class Database:
 
     def _migrate(self):
         with self.conn() as c:
-            # Add extras column for custom mask tokens if not present
             cols = [r[1] for r in c.execute("PRAGMA table_info(releases)").fetchall()]
             if "extras" not in cols:
                 c.execute("ALTER TABLE releases ADD COLUMN extras TEXT DEFAULT '{}'")
+            if "disc_number" not in cols:
+                c.execute("ALTER TABLE releases ADD COLUMN disc_number INTEGER NOT NULL DEFAULT 1")
+            if "is_multi_disc" not in cols:
+                c.execute("ALTER TABLE releases ADD COLUMN is_multi_disc INTEGER NOT NULL DEFAULT 0")
+            if "parent_path" not in cols:
+                c.execute("ALTER TABLE releases ADD COLUMN parent_path TEXT")
 
             # Remove {country} that was mistakenly shipped as part of the default mask
             old = "{artist} - {year_recorded} - {title} [{catalog_number}] [{media}] ({year_released}) {country}"
@@ -173,6 +178,9 @@ class Database:
         year_released: str | None,
         folder_path: str,
         extras: dict | None = None,
+        disc_number: int = 1,
+        is_multi_disc: bool = False,
+        parent_path: str | None = None,
     ):
         now = datetime.now().isoformat(timespec="seconds")
         extras_json = json.dumps(extras or {}, ensure_ascii=False)
@@ -182,8 +190,9 @@ class Database:
                 INSERT INTO releases
                     (source_id, artist, year_recorded, title, catalog_number,
                      media, year_released, folder_path, last_seen_path,
-                     is_available, modified_at, extras)
-                VALUES (?,?,?,?,?,?,?,?,?,1,?,?)
+                     is_available, modified_at, extras,
+                     disc_number, is_multi_disc, parent_path)
+                VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)
                 ON CONFLICT(folder_path) DO UPDATE SET
                     artist=excluded.artist,
                     year_recorded=excluded.year_recorded,
@@ -194,12 +203,15 @@ class Database:
                     last_seen_path=excluded.last_seen_path,
                     is_available=1,
                     modified_at=excluded.modified_at,
-                    extras=excluded.extras
+                    extras=excluded.extras,
+                    is_multi_disc=excluded.is_multi_disc,
+                    parent_path=excluded.parent_path
                 """,
                 (
                     source_id, artist, year_recorded, title,
                     catalog_number, media, year_released,
                     folder_path, folder_path, now, extras_json,
+                    disc_number, int(is_multi_disc), parent_path,
                 ),
             )
 
@@ -218,16 +230,30 @@ class Database:
                 f"modified_at=? WHERE folder_path=?",
                 vals,
             )
+            # Update disc children: adjust their folder_path and parent_path
+            children = c.execute(
+                "SELECT id, folder_path FROM releases WHERE parent_path=?", (old_path,)
+            ).fetchall()
+            for child in children:
+                old_child = child["folder_path"]
+                new_child = new_path + old_child[len(old_path):]
+                c.execute(
+                    "UPDATE releases SET folder_path=?, last_seen_path=?, parent_path=?, modified_at=? WHERE id=?",
+                    (new_child, new_child, new_path, now, child["id"]),
+                )
 
     def delete_release_by_path(self, folder_path: str):
         with self.conn() as c:
-            c.execute("DELETE FROM releases WHERE folder_path=?", (folder_path,))
+            c.execute(
+                "DELETE FROM releases WHERE folder_path=? OR parent_path=?",
+                (folder_path, folder_path),
+            )
 
     def set_release_availability(self, folder_path: str, available: bool):
         with self.conn() as c:
             c.execute(
-                "UPDATE releases SET is_available=? WHERE folder_path=?",
-                (int(available), folder_path),
+                "UPDATE releases SET is_available=? WHERE folder_path=? OR parent_path=?",
+                (int(available), folder_path, folder_path),
             )
 
     def set_releases_availability_by_source(self, source_id: int, available: bool):
@@ -242,7 +268,7 @@ class Database:
             SELECT a.*, s.path AS source_path, s.is_available AS source_available
             FROM releases a
             JOIN sources s ON a.source_id = s.id
-            WHERE 1=1
+            WHERE a.parent_path IS NULL
         """
         params: list = []
         # Split into words so "david bowie pinups" matches artist + title together
@@ -265,16 +291,42 @@ class Database:
                 "SELECT * FROM releases WHERE folder_path=?", (folder_path,)
             ).fetchone()
 
+    def get_disc_entries(self, parent_path: str) -> list[sqlite3.Row]:
+        with self.conn() as c:
+            return c.execute(
+                "SELECT a.*, s.path AS source_path, s.is_available AS source_available"
+                " FROM releases a JOIN sources s ON a.source_id = s.id"
+                " WHERE a.parent_path=? ORDER BY a.disc_number",
+                (parent_path,),
+            ).fetchall()
+
+    def update_disc_children_metadata(self, parent_path: str, **fields):
+        """Update metadata fields for all disc children of a container."""
+        if not fields:
+            return
+        now = datetime.now().isoformat(timespec="seconds")
+        sets = ", ".join(f"{k}=?" for k in fields) + ", modified_at=?"
+        vals = list(fields.values()) + [now, parent_path]
+        with self.conn() as c:
+            c.execute(f"UPDATE releases SET {sets} WHERE parent_path=?", vals)
+
+    def delete_disc_entries_for_parent(self, parent_path: str):
+        with self.conn() as c:
+            c.execute("DELETE FROM releases WHERE parent_path=?", (parent_path,))
+
     def get_release_paths_for_source(self, source_id: int) -> set[str]:
         with self.conn() as c:
             rows = c.execute(
-                "SELECT folder_path FROM releases WHERE source_id=?", (source_id,)
+                "SELECT folder_path FROM releases WHERE source_id=? AND parent_path IS NULL",
+                (source_id,),
             ).fetchall()
         return {r["folder_path"] for r in rows}
 
     def count_releases(self) -> int:
         with self.conn() as c:
-            return c.execute("SELECT COUNT(*) FROM releases").fetchone()[0]
+            return c.execute(
+                "SELECT COUNT(*) FROM releases WHERE parent_path IS NULL"
+            ).fetchone()[0]
 
     def clear_releases(self):
         with self.conn() as c:

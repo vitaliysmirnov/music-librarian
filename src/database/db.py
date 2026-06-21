@@ -9,6 +9,16 @@ from src.utils.logger import get_logger
 
 log = get_logger()
 
+_DASH_CHARS = "‐‑‒–—―−﹘﹣－"
+
+
+def _search_norm(s: str) -> str:
+    """Lowercase and collapse all dash variants to a plain hyphen."""
+    s = s.lower()
+    for ch in _DASH_CHARS:
+        s = s.replace(ch, "-")
+    return s
+
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
@@ -57,9 +67,10 @@ class Database:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA journal_mode=WAL")
-        # Unicode-aware lower() for case-insensitive search across all scripts
-        # (SQLite's built-in LOWER/LIKE only handles ASCII).
-        conn.create_function("py_lower", 1, lambda s: s.lower() if s else "")
+        # Unicode-aware normalisation for search: lowercase + collapse all dash
+        # variants (en-dash, em-dash, minus, etc.) to a plain hyphen so that
+        # e.g. "Би-2" and "Би—2" match the same query term.
+        conn.create_function("py_lower", 1, lambda s: _search_norm(s) if s else "")
         return conn
 
     def _init(self):
@@ -236,7 +247,7 @@ class Database:
         params: list = []
         # Split into words so "david bowie pinups" matches artist + title together
         for word in search.split():
-            w = f"%{word.lower()}%"
+            w = f"%{_search_norm(word)}%"
             query += (
                 " AND (py_lower(a.artist) LIKE ? OR py_lower(a.title) LIKE ?"
                 " OR py_lower(a.year_recorded) LIKE ? OR py_lower(a.year_released) LIKE ?"

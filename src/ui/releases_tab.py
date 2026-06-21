@@ -149,8 +149,20 @@ def _play_release(folder_path: str, player_path: str):
 
     if player_path:
         clean = player_path.rstrip("/")
-        if platform.system() == "Darwin" and clean.endswith(".app"):
-            subprocess.Popen(["open", "-a", clean, target])
+        if platform.system() == "Darwin":
+            # Use `open -a <bundle.app>` regardless of whether the stored path
+            # is the .app itself or a binary nested inside it — this lets macOS
+            # hand the file to the already-running instance, which replaces its
+            # playlist (the behaviour that originally fixed the enqueue bug).
+            app_bundle = next(
+                (str(p) for p in [Path(clean)] + list(Path(clean).parents)
+                 if str(p).endswith(".app")),
+                None,
+            )
+            if app_bundle:
+                subprocess.Popen(["open", "-a", app_bundle, target])
+            else:
+                subprocess.Popen([clean, target])
         else:
             subprocess.Popen([clean, target])
     elif platform.system() == "Darwin":
@@ -467,6 +479,8 @@ class ReleasesTab(QWidget):
         self._table.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self._table.setDefaultDropAction(Qt.DropAction.CopyAction)
         self._table.setMouseTracking(True)
+        self._table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._show_context_menu)
 
         self._delegate = _PlayButtonDelegate(self._db, self._table)
         self._table.setItemDelegate(self._delegate)
@@ -531,6 +545,50 @@ class ReleasesTab(QWidget):
         if proxy_index.column() == COL_PLAY:
             return
         self._edit_release()
+
+    # ── Row context menu ───────────────────────────────────────────────────
+
+    def _show_context_menu(self, pos):
+        proxy_index = self._table.indexAt(pos)
+        if not proxy_index.isValid():
+            return
+        # Ensure the clicked row is selected
+        self._table.selectionModel().setCurrentIndex(
+            proxy_index, self._table.selectionModel().SelectionFlag.ClearAndSelect |
+            self._table.selectionModel().SelectionFlag.Rows,
+        )
+        row = self._selected_row()
+        if not row:
+            return
+
+        available = bool(row["is_available"])
+        player_path = self._db.get_setting("audio_player_path", "").strip()
+
+        menu = QMenu(self)
+
+        if player_path:
+            player_name = Path(player_path.rstrip("/")).stem or player_path
+            act_play = menu.addAction(f"Play with {player_name}")
+            act_play.setEnabled(available)
+        else:
+            act_play = None
+
+        act_open = menu.addAction("Open Folder")
+        act_open.setEnabled(available)
+
+        menu.addSeparator()
+
+        act_delete = menu.addAction("Move to Trash")
+
+        chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
+        if chosen is None:
+            return
+        if chosen == act_play:
+            _play_release(row["folder_path"], player_path)
+        elif chosen == act_open:
+            self._open_release()
+        elif chosen == act_delete:
+            self._trash_release()
 
     # ── Header context menu ────────────────────────────────────────────────
 

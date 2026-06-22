@@ -373,17 +373,19 @@ class EditReleaseDialog(QDialog):
         )
         new_path = old_path.parent / new_name
 
-        if self._release["is_available"] and unicodedata.normalize("NFC", old_path.name) != new_name:
-            if new_path.exists() and not _same_inode(old_path, new_path):
-                QMessageBox.warning(self, "Error",
-                                    f"A folder with that name already exists:\n{new_name}")
-                return
-            try:
-                old_path.rename(new_path)
-                log.info("Folder renamed: %s → %s", old_path, new_path)
-            except OSError as e:
-                QMessageBox.warning(self, "Rename Error", str(e))
-                return
+        if self._release["is_available"]:
+            same = new_path.exists() and _same_inode(old_path, new_path)
+            if not same and unicodedata.normalize("NFC", old_path.name) != new_name:
+                if new_path.exists():
+                    QMessageBox.warning(self, "Error",
+                                        f"A folder with that name already exists:\n{new_name}")
+                    return
+                try:
+                    old_path.rename(new_path)
+                    log.info("Folder renamed: %s → %s", old_path, new_path)
+                except OSError as e:
+                    QMessageBox.warning(self, "Rename Error", str(e))
+                    return
         elif not self._release["is_available"]:
             new_path = old_path
 
@@ -415,17 +417,19 @@ class EditReleaseDialog(QDialog):
         )
         new_parent = old_parent.parent / new_parent_name
 
-        if parent_row["is_available"] and unicodedata.normalize("NFC", old_parent.name) != new_parent_name:
-            if new_parent.exists() and not _same_inode(old_parent, new_parent):
-                QMessageBox.warning(self, "Error",
-                                    f"A folder with that name already exists:\n{new_parent_name}")
-                return
-            try:
-                old_parent.rename(new_parent)
-                log.info("Folder renamed: %s → %s", old_parent, new_parent)
-            except OSError as e:
-                QMessageBox.warning(self, "Rename Error", str(e))
-                return
+        if parent_row["is_available"]:
+            same = new_parent.exists() and _same_inode(old_parent, new_parent)
+            if not same and unicodedata.normalize("NFC", old_parent.name) != new_parent_name:
+                if new_parent.exists():
+                    QMessageBox.warning(self, "Error",
+                                        f"A folder with that name already exists:\n{new_parent_name}")
+                    return
+                try:
+                    old_parent.rename(new_parent)
+                    log.info("Folder renamed: %s → %s", old_parent, new_parent)
+                except OSError as e:
+                    QMessageBox.warning(self, "Rename Error", str(e))
+                    return
         else:
             new_parent = old_parent
 

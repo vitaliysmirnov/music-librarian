@@ -215,7 +215,9 @@ class SettingsTab(QWidget):
             handler.setLevel(0)
             get_logger().addHandler(handler)
         self._log_handler = handler
-        self._log_handler.signals.record_emitted.connect(self._append_log_line)
+        self._log_handler.signals.record_emitted.connect(
+            self._append_log_line, Qt.ConnectionType.QueuedConnection
+        )
 
     def _append_log_line(self, level: str, message: str):
         fmt = QTextCharFormat()

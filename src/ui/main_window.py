@@ -56,7 +56,7 @@ class MainWindow(QMainWindow):
         self._watcher: LibraryWatcher | None = None
 
         self._fs_signal = _FsChangeSignal()
-        self._fs_signal.triggered.connect(self._on_fs_change)
+        self._fs_signal.triggered.connect(self._on_fs_change, Qt.ConnectionType.QueuedConnection)
 
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._auto_scan)

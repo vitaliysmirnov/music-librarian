@@ -1,4 +1,5 @@
 import json
+import unicodedata
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QRect
@@ -372,7 +373,7 @@ class EditReleaseDialog(QDialog):
         )
         new_path = old_path.parent / new_name
 
-        if self._release["is_available"] and old_path.name != new_name:
+        if self._release["is_available"] and unicodedata.normalize("NFC", old_path.name) != new_name:
             if new_path.exists() and not _same_inode(old_path, new_path):
                 QMessageBox.warning(self, "Error",
                                     f"A folder with that name already exists:\n{new_name}")
@@ -414,7 +415,7 @@ class EditReleaseDialog(QDialog):
         )
         new_parent = old_parent.parent / new_parent_name
 
-        if parent_row["is_available"] and old_parent.name != new_parent_name:
+        if parent_row["is_available"] and unicodedata.normalize("NFC", old_parent.name) != new_parent_name:
             if new_parent.exists() and not _same_inode(old_parent, new_parent):
                 QMessageBox.warning(self, "Error",
                                     f"A folder with that name already exists:\n{new_parent_name}")

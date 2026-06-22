@@ -58,12 +58,19 @@ def load_cover(covers_dir: Path, folder_path: str) -> "QPixmap | None":
 
 
 def load_cover_for_widget(covers_dir: Path, folder_path: str,
-                          display_size: int) -> "QPixmap | None":
-    """Load stored cover scaled to *display_size* px — avoids loading 600 px when only 200 needed."""
-    path = cover_path(covers_dir, folder_path)
-    if not path.exists():
+                          display_size: int,
+                          fallback_key: "str | None" = None) -> "QPixmap | None":
+    """Load stored cover scaled to *display_size* px.
+
+    If no cover exists for *folder_path* and *fallback_key* is given, tries
+    the fallback (used so disc children inherit the parent's cover by default).
+    """
+    p = cover_path(covers_dir, folder_path)
+    if not p.exists() and fallback_key:
+        p = cover_path(covers_dir, fallback_key)
+    if not p.exists():
         return None
-    return _read_scaled(str(path), display_size)
+    return _read_scaled(str(p), display_size)
 
 
 def preview_from_file(source_path: str, display_size: int) -> "QPixmap | None":

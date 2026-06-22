@@ -167,8 +167,10 @@ class EditReleaseDialog(QDialog):
         self._is_disc_child = bool(release.get("parent_path"))
         self._cover_source_path: str | None = None  # set when user picks a new cover
 
-        # Key used to look up / save the cover (parent folder for disc children)
-        self._cover_key = release.get("parent_path") or release["folder_path"]
+        # Each release (including disc children) stores its cover by its own folder_path.
+        # Disc children fall back to the parent's cover when their own is absent.
+        self._cover_key = release["folder_path"]
+        self._parent_cover_key: str | None = release.get("parent_path")
 
         self.setWindowTitle("Release Info")
         self.setMinimumWidth(560)
@@ -185,8 +187,11 @@ class EditReleaseDialog(QDialog):
 
         self._cover = _CoverWidget()
         self._cover.cover_changed.connect(self._on_cover_changed)
-        # Load existing cover scaled to display size — no need to load full 600 px
-        existing = _covers.load_cover_for_widget(self._db.covers_dir, self._cover_key, 600)
+        # Load own cover; disc children fall back to parent's cover if no per-disc one exists
+        existing = _covers.load_cover_for_widget(
+            self._db.covers_dir, self._cover_key, 600,
+            fallback_key=self._parent_cover_key,
+        )
         if existing:
             self._cover.set_pixmap(existing)
         self._cover.set_browse_root(self._release.get("source_path") or "")

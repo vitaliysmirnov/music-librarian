@@ -32,6 +32,14 @@ def _build_folder_name(fields: dict, mask: str) -> str:
     return result.strip()
 
 
+def _same_inode(a: Path, b: Path) -> bool:
+    """True if both paths refer to the same filesystem object (handles NFC/NFD aliases on macOS)."""
+    try:
+        return a.stat().st_ino == b.stat().st_ino
+    except OSError:
+        return False
+
+
 def _load_extras(release: dict) -> dict:
     try:
         return json.loads(release.get("extras") or "{}")
@@ -289,6 +297,31 @@ class EditReleaseDialog(QDialog):
             # Folder renamed — rename the stored cover to match new key
             _covers.rename_cover(self._db.covers_dir, self._cover_key, new_cover_key)
 
+    def _maybe_apply_cover_to_discs(self, parent_path: str):
+        """For multi-disc containers: ask whether to propagate the cover to disc children."""
+        if not self._release.get("is_multi_disc") or not self._cover_source_path:
+            return
+        children = self._db.get_disc_entries(parent_path)
+        if not children:
+            return
+
+        from PySide6.QtWidgets import QPushButton
+        box = QMessageBox(self)
+        box.setWindowTitle("Cover Art")
+        box.setText("Apply this cover to disc children as well?")
+        box.setInformativeText(
+            'Choose "All discs" to use the same cover for every disc.\n'
+            'Choose "This release only" to keep disc covers independent.'
+        )
+        btn_all = box.addButton("All discs", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("This release only", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is btn_all:
+            for child in children:
+                _covers.save_cover(
+                    self._db.covers_dir, child["folder_path"], self._cover_source_path
+                )
+
     def _on_save(self):
         fields = self._all_fields()
         artist = fields["artist"]
@@ -340,7 +373,7 @@ class EditReleaseDialog(QDialog):
         new_path = old_path.parent / new_name
 
         if self._release["is_available"] and old_path.name != new_name:
-            if new_path.exists():
+            if new_path.exists() and not _same_inode(old_path, new_path):
                 QMessageBox.warning(self, "Error",
                                     f"A folder with that name already exists:\n{new_name}")
                 return
@@ -360,6 +393,7 @@ class EditReleaseDialog(QDialog):
             extras=extras_json, disc_number=disc_number,
         )
         self._save_cover(str(new_path))
+        self._maybe_apply_cover_to_discs(str(new_path))
         self.accept()
 
     def _save_disc_child(self, artist, year_recorded, title, catalog, media,
@@ -381,7 +415,7 @@ class EditReleaseDialog(QDialog):
         new_parent = old_parent.parent / new_parent_name
 
         if parent_row["is_available"] and old_parent.name != new_parent_name:
-            if new_parent.exists():
+            if new_parent.exists() and not _same_inode(old_parent, new_parent):
                 QMessageBox.warning(self, "Error",
                                     f"A folder with that name already exists:\n{new_parent_name}")
                 return

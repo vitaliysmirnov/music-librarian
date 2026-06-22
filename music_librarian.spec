@@ -115,8 +115,5 @@ if IS_MAC:
             "NSHighResolutionCapable": True,
             "LSUIElement": False,
             "NSHumanReadableCopyright": "",
-            # Suppress TSM diagnostic noise from Qt text-field focus events.
-            # Set at launch by macOS before the process starts — no code needed.
-            "LSEnvironment": {"OS_ACTIVITY_MODE": "disable"},
         },
     )

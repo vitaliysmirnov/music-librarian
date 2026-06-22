@@ -181,7 +181,7 @@ class EditReleaseDialog(QDialog):
         existing = _covers.load_cover_for_widget(self._db.covers_dir, self._cover_key, 600)
         if existing:
             self._cover.set_pixmap(existing)
-        self._cover.set_browse_root(release.get("source_path") or "")
+        self._cover.set_browse_root(self._release.get("source_path") or "")
         row.addWidget(self._cover, stretch=2)
 
         # Form column

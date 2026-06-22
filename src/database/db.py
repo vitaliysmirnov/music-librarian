@@ -97,6 +97,7 @@ class Database:
 
             # Normalise all stored paths to NFC — older entries may be NFD (macOS
             # filesystem) while the scanner now writes NFC, causing duplicates.
+            # Runs on every startup so it catches entries created after the last run.
             path_rows = c.execute("SELECT id, folder_path FROM releases").fetchall()
             for row in path_rows:
                 nfc = _ud.normalize("NFC", row["folder_path"])
@@ -105,6 +106,8 @@ class Database:
                         "SELECT id FROM releases WHERE folder_path=?", (nfc,)
                     ).fetchone()
                     if existing:
+                        # NFC version already present — drop NFD entry and its disc children
+                        c.execute("DELETE FROM releases WHERE parent_path=?", (row["folder_path"],))
                         c.execute("DELETE FROM releases WHERE id=?", (row["id"],))
                     else:
                         c.execute(

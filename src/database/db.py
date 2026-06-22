@@ -79,6 +79,7 @@ class Database:
         self._migrate()
 
     def _migrate(self):
+        import unicodedata as _ud
         with self.conn() as c:
             cols = [r[1] for r in c.execute("PRAGMA table_info(releases)").fetchall()]
             if "extras" not in cols:
@@ -89,6 +90,32 @@ class Database:
                 c.execute("ALTER TABLE releases ADD COLUMN is_multi_disc INTEGER NOT NULL DEFAULT 0")
             if "parent_path" not in cols:
                 c.execute("ALTER TABLE releases ADD COLUMN parent_path TEXT")
+
+            # Normalise all stored paths to NFC — older entries may be NFD (macOS
+            # filesystem) while the scanner now writes NFC, causing duplicates.
+            path_rows = c.execute("SELECT id, folder_path FROM releases").fetchall()
+            for row in path_rows:
+                nfc = _ud.normalize("NFC", row["folder_path"])
+                if nfc != row["folder_path"]:
+                    existing = c.execute(
+                        "SELECT id FROM releases WHERE folder_path=?", (nfc,)
+                    ).fetchone()
+                    if existing:
+                        c.execute("DELETE FROM releases WHERE id=?", (row["id"],))
+                    else:
+                        c.execute(
+                            "UPDATE releases SET folder_path=?, last_seen_path=? WHERE id=?",
+                            (nfc, nfc, row["id"]),
+                        )
+            parent_rows = c.execute(
+                "SELECT id, parent_path FROM releases WHERE parent_path IS NOT NULL"
+            ).fetchall()
+            for row in parent_rows:
+                nfc = _ud.normalize("NFC", row["parent_path"])
+                if nfc != row["parent_path"]:
+                    c.execute(
+                        "UPDATE releases SET parent_path=? WHERE id=?", (nfc, row["id"])
+                    )
 
             # Remove {country} that was mistakenly shipped as part of the default mask
             old = "{artist} - {year_recorded} - {title} [{catalog_number}] [{media}] ({year_released}) {country}"

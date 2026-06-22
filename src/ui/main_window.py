@@ -56,7 +56,11 @@ class MainWindow(QMainWindow):
         self._watcher: LibraryWatcher | None = None
 
         self._fs_signal = _FsChangeSignal()
-        self._fs_signal.triggered.connect(self._on_fs_change, Qt.ConnectionType.QueuedConnection)
+        self._fs_signal.triggered.connect(self._on_fs_change)
+
+        self._watcher_poll_timer = QTimer(self)
+        self._watcher_poll_timer.setInterval(500)
+        self._watcher_poll_timer.timeout.connect(self._poll_watcher)
 
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._auto_scan)
@@ -237,12 +241,18 @@ class MainWindow(QMainWindow):
 
     # ── Watcher ───────────────────────────────────────────────────────────
 
+    def _poll_watcher(self):
+        if self._watcher:
+            self._watcher.process_pending()
+
     def _start_watcher(self):
         self._watcher = LibraryWatcher(self._db, self._fs_signal.triggered.emit)
         self._watcher.start()
+        self._watcher_poll_timer.start()
 
     def _stop_watcher(self):
         if self._watcher:
+            self._watcher_poll_timer.stop()
             self._watcher.stop()
             self._watcher = None
 

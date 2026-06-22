@@ -1,4 +1,5 @@
 import json
+import queue
 import re
 import unicodedata
 from pathlib import Path
@@ -59,97 +60,28 @@ def _parent_is_source_or_artist(path: str, source_path: str) -> bool:
 
 
 class _ReleaseEventHandler(FileSystemEventHandler):
-    def __init__(self, db: Database, source_id: int, source_path: str, on_change,
-                 pattern: re.Pattern):
+    """Puts raw filesystem event tuples into a queue — does nothing else.
+
+    All processing (NFC normalisation, DB writes, logging) happens on the
+    main thread in LibraryWatcher.process_pending(), avoiding any macOS
+    text-system (TSM) initialisation from the watchdog background thread.
+    """
+
+    def __init__(self, event_queue: queue.SimpleQueue):
         super().__init__()
-        self._db = db
-        self._source_id = source_id
-        self._source_path = source_path
-        self._on_change = on_change
-        self._pattern = pattern
+        self._q = event_queue
 
     def on_created(self, event):
-        if not isinstance(event, DirCreatedEvent):
-            return
-        src = _norm(event.src_path)
-        if not _is_release_path(src, self._source_path, self._pattern):
-            return
-        parsed = parse_folder_name(Path(src).name, self._pattern)
-        if not parsed:
-            return
-        self._db.upsert_release(
-            source_id=self._source_id,
-            artist=parsed.artist,
-            year_recorded=parsed.year_recorded,
-            title=parsed.title,
-            catalog_number=parsed.catalog_number,
-            media=parsed.media,
-            year_released=parsed.year_released,
-            folder_path=src,
-            extras=parsed.extras,
-        )
-        log.info("Watcher: added release: %s", src)
-        self._on_change()
+        if isinstance(event, DirCreatedEvent):
+            self._q.put(("created", event.src_path, ""))
 
     def on_deleted(self, event):
-        if not isinstance(event, DirDeletedEvent):
-            return
-        src = _norm(event.src_path)
-        if not _parent_is_source_or_artist(src, self._source_path):
-            return
-        self._db.delete_release_by_path(src)
-        log.info("Watcher: deleted release: %s", src)
-        self._on_change()
+        if isinstance(event, DirDeletedEvent):
+            self._q.put(("deleted", event.src_path, ""))
 
     def on_moved(self, event):
-        if not isinstance(event, DirMovedEvent):
-            return
-        src = _norm(event.src_path)
-        dst = _norm(event.dest_path)
-        src_is_release = _is_release_path(src, self._source_path, self._pattern)
-        dst_is_release = _is_release_path(dst, self._source_path, self._pattern)
-
-        if src_is_release and dst_is_release:
-            parsed = parse_folder_name(Path(dst).name, self._pattern)
-            if parsed:
-                self._db.rename_release(
-                    src,
-                    dst,
-                    artist=parsed.artist,
-                    year_recorded=parsed.year_recorded,
-                    title=parsed.title,
-                    catalog_number=parsed.catalog_number,
-                    media=parsed.media,
-                    year_released=parsed.year_released,
-                    extras=json.dumps(parsed.extras, ensure_ascii=False),
-                )
-                log.info("Watcher: renamed: %s → %s", src, dst)
-            else:
-                self._db.delete_release_by_path(src)
-                log.info("Watcher: renamed to unparseable, removed: %s", src)
-            self._on_change()
-
-        elif src_is_release:
-            self._db.delete_release_by_path(src)
-            log.info("Watcher: release moved out: %s", src)
-            self._on_change()
-
-        elif dst_is_release:
-            parsed = parse_folder_name(Path(dst).name, self._pattern)
-            if parsed:
-                self._db.upsert_release(
-                    source_id=self._source_id,
-                    artist=parsed.artist,
-                    year_recorded=parsed.year_recorded,
-                    title=parsed.title,
-                    catalog_number=parsed.catalog_number,
-                    media=parsed.media,
-                    year_released=parsed.year_released,
-                    folder_path=dst,
-                    extras=parsed.extras,
-                )
-                log.info("Watcher: release moved in: %s", dst)
-                self._on_change()
+        if isinstance(event, DirMovedEvent):
+            self._q.put(("moved", event.src_path, event.dest_path))
 
 
 class LibraryWatcher:
@@ -158,6 +90,9 @@ class LibraryWatcher:
         self._on_change = on_change
         self._observer = Observer()
         self._watches: dict[int, object] = {}
+        self._queue: queue.SimpleQueue = queue.SimpleQueue()
+        # source_id → (source_path, pattern) for use in process_pending
+        self._source_info: dict[int, tuple[str, re.Pattern]] = {}
 
     def start(self):
         self._schedule_all()
@@ -168,6 +103,113 @@ class LibraryWatcher:
         self._observer.stop()
         self._observer.join()
         log.info("FS watcher stopped")
+
+    def process_pending(self):
+        """Drain the event queue and process events on the caller's thread.
+
+        Must be called from the main thread (e.g. via a QTimer).
+        """
+        changed = False
+        while not self._queue.empty():
+            try:
+                kind, src, dst = self._queue.get_nowait()
+            except queue.Empty:
+                break
+            changed |= self._handle(kind, _norm(src), _norm(dst))
+        if changed:
+            self._on_change()
+
+    def _handle(self, kind: str, src: str, dst: str) -> bool:
+        # Determine which source this path belongs to
+        source_id, source_path, pattern = self._source_for(src) or (None, None, None)
+        if source_id is None and kind == "moved":
+            source_id, source_path, pattern = self._source_for(dst) or (None, None, None)
+        if source_id is None:
+            return False
+
+        if kind == "created":
+            if not _is_release_path(src, source_path, pattern):
+                return False
+            parsed = parse_folder_name(Path(src).name, pattern)
+            if not parsed:
+                return False
+            self._db.upsert_release(
+                source_id=source_id,
+                artist=parsed.artist,
+                year_recorded=parsed.year_recorded,
+                title=parsed.title,
+                catalog_number=parsed.catalog_number,
+                media=parsed.media,
+                year_released=parsed.year_released,
+                folder_path=src,
+                extras=parsed.extras,
+            )
+            log.info("Watcher: added release: %s", src)
+            return True
+
+        if kind == "deleted":
+            if not _parent_is_source_or_artist(src, source_path):
+                return False
+            self._db.delete_release_by_path(src)
+            log.info("Watcher: deleted release: %s", src)
+            return True
+
+        if kind == "moved":
+            src_ok = _is_release_path(src, source_path, pattern)
+            dst_ok = _is_release_path(dst, source_path, pattern)
+
+            if src_ok and dst_ok:
+                parsed = parse_folder_name(Path(dst).name, pattern)
+                if parsed:
+                    self._db.rename_release(
+                        src, dst,
+                        artist=parsed.artist,
+                        year_recorded=parsed.year_recorded,
+                        title=parsed.title,
+                        catalog_number=parsed.catalog_number,
+                        media=parsed.media,
+                        year_released=parsed.year_released,
+                        extras=json.dumps(parsed.extras, ensure_ascii=False),
+                    )
+                    log.info("Watcher: renamed: %s → %s", src, dst)
+                else:
+                    self._db.delete_release_by_path(src)
+                    log.info("Watcher: renamed to unparseable, removed: %s", src)
+                return True
+
+            if src_ok:
+                self._db.delete_release_by_path(src)
+                log.info("Watcher: release moved out: %s", src)
+                return True
+
+            if dst_ok:
+                parsed = parse_folder_name(Path(dst).name, pattern)
+                if parsed:
+                    self._db.upsert_release(
+                        source_id=source_id,
+                        artist=parsed.artist,
+                        year_recorded=parsed.year_recorded,
+                        title=parsed.title,
+                        catalog_number=parsed.catalog_number,
+                        media=parsed.media,
+                        year_released=parsed.year_released,
+                        folder_path=dst,
+                        extras=parsed.extras,
+                    )
+                    log.info("Watcher: release moved in: %s", dst)
+                    return True
+
+        return False
+
+    def _source_for(self, path: str) -> tuple[int, str, re.Pattern] | None:
+        """Find which registered source contains `path`."""
+        for sid, (sp, pat) in self._source_info.items():
+            try:
+                Path(path).relative_to(sp)
+                return sid, sp, pat
+            except ValueError:
+                continue
+        return None
 
     def _schedule_all(self):
         for source in self._db.get_sources():
@@ -180,10 +222,10 @@ class LibraryWatcher:
         if not Path(path).exists():
             return
         pattern = _load_pattern(self._db)
-        handler = _ReleaseEventHandler(self._db, source_id, path, self._on_change, pattern)
-        # recursive=True so we catch renames inside artist subfolders
+        handler = _ReleaseEventHandler(self._queue)
         watch = self._observer.schedule(handler, path, recursive=True)
         self._watches[source_id] = watch
+        self._source_info[source_id] = (path, pattern)
         log.info("Watching source %d: %s", source_id, path)
 
     def refresh_watches(self):
@@ -192,3 +234,4 @@ class LibraryWatcher:
                 self._add_watch(source["id"], source["path"])
             elif source["id"] in self._watches:
                 self._observer.unschedule(self._watches.pop(source["id"]))
+                self._source_info.pop(source["id"], None)

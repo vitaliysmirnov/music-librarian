@@ -62,6 +62,10 @@ class Database:
         self._path = str(db_path)
         self._init()
 
+    @property
+    def covers_dir(self) -> Path:
+        return Path(self._path).parent / "covers"
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path, check_same_thread=False)
         conn.row_factory = sqlite3.Row

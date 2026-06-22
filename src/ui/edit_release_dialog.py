@@ -1,13 +1,17 @@
 import json
 from pathlib import Path
 
+from PySide6.QtCore import Qt, Signal, QRect
+from PySide6.QtGui import QPainter, QPen, QColor, QPixmap
 from PySide6.QtWidgets import (
     QDialog, QFormLayout, QLineEdit, QDialogButtonBox,
-    QLabel, QMessageBox, QVBoxLayout,
+    QLabel, QMessageBox, QVBoxLayout, QHBoxLayout,
+    QSizePolicy, QFileDialog, QWidget,
 )
 
 from src.database.db import Database
 from src.scanner.mask import DEFAULT_MASK, get_custom_tokens
+from src.utils import covers as _covers
 from src.utils.logger import get_logger
 
 log = get_logger()
@@ -18,13 +22,11 @@ def _build_folder_name(fields: dict, mask: str) -> str:
     result = mask
     for token, value in fields.items():
         if not value:
-            # Remove optional bracketed tokens when empty
             result = result.replace(f"[{{{token}}}]", "")
             result = result.replace(f"({{{token}}})", "")
             result = result.replace(f"{{{token}}}", "")
         else:
             result = result.replace(f"{{{token}}}", value)
-    # Collapse multiple spaces
     while "  " in result:
         result = result.replace("  ", " ")
     return result.strip()
@@ -37,6 +39,111 @@ def _load_extras(release: dict) -> dict:
         return {}
 
 
+class _CoverWidget(QWidget):
+    """Square cover art widget. Supports drag-and-drop and click-to-browse."""
+
+    cover_changed = Signal(str)   # emits path to newly selected image file
+
+    _HINT_TEXT = "Drop image here\nor click to browse"
+    _BORDER_COLOR = QColor(120, 120, 120)
+    _TEXT_COLOR = QColor(140, 140, 140)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pixmap: QPixmap | None = None
+        self.setAcceptDrops(True)
+        self.setMinimumSize(120, 120)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    # ── Geometry ──────────────────────────────────────────────────────────
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        return width
+
+    def sizeHint(self):
+        from PySide6.QtCore import QSize
+        w = self.width() if self.width() > 0 else 160
+        return QSize(w, w)
+
+    # ── Public API ────────────────────────────────────────────────────────
+
+    def set_pixmap(self, pixmap: QPixmap | None):
+        self._pixmap = pixmap
+        self.update()
+
+    def pixmap_loaded(self) -> bool:
+        return self._pixmap is not None
+
+    # ── Paint ─────────────────────────────────────────────────────────────
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+        side = min(self.width(), self.height())
+        x = (self.width() - side) // 2
+        y = (self.height() - side) // 2
+        square = QRect(x, y, side, side)
+
+        if self._pixmap:
+            scaled = self._pixmap.scaled(
+                side, side,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            px = x + (side - scaled.width()) // 2
+            py = y + (side - scaled.height()) // 2
+            painter.drawPixmap(px, py, scaled)
+        else:
+            pen = QPen(self._BORDER_COLOR, 1, Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(square.adjusted(1, 1, -2, -2))
+            painter.setPen(self._TEXT_COLOR)
+            painter.drawText(square, Qt.AlignmentFlag.AlignCenter, self._HINT_TEXT)
+
+    # ── Interaction ───────────────────────────────────────────────────────
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._browse()
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            url = event.mimeData().urls()[0]
+            if url.isLocalFile():
+                event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        if urls:
+            path = urls[0].toLocalFile()
+            if path:
+                self._load_from_path(path)
+
+    def _browse(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Cover Image", "",
+            "Images (*.jpg *.jpeg *.png *.bmp *.tiff *.tif *.webp)",
+        )
+        if path:
+            self._load_from_path(path)
+
+    def _load_from_path(self, path: str):
+        from src.utils.covers import preview_from_file
+        pix = preview_from_file(path, 600)
+        if pix is None:
+            QMessageBox.warning(self, "Error", f"Cannot load image:\n{path}")
+            return
+        self.set_pixmap(pix)
+        self.cover_changed.emit(path)
+
+
 class EditReleaseDialog(QDialog):
     def __init__(self, db: Database, release: dict, parent=None):
         super().__init__(parent)
@@ -46,17 +153,39 @@ class EditReleaseDialog(QDialog):
         self._extra_tokens = get_custom_tokens(self._mask)
         self._extras_current = _load_extras(release)
         self._is_disc_child = bool(release.get("parent_path"))
+        self._cover_source_path: str | None = None  # set when user picks a new cover
+
+        # Key used to look up / save the cover (parent folder for disc children)
+        self._cover_key = release.get("parent_path") or release["folder_path"]
+
         self.setWindowTitle("Edit Release")
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(560)
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        # ── Main row: cover | form ─────────────────────────────────────────
+        row = QHBoxLayout()
+        row.setSpacing(16)
+
+        self._cover = _CoverWidget()
+        self._cover.cover_changed.connect(self._on_cover_changed)
+        # Load existing cover scaled to display size — no need to load full 600 px
+        existing = _covers.load_cover_for_widget(self._db.covers_dir, self._cover_key, 600)
+        if existing:
+            self._cover.set_pixmap(existing)
+        row.addWidget(self._cover, stretch=2)
+
+        # Form column
+        form_col = QVBoxLayout()
+        form_col.setSpacing(4)
 
         form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
 
-        # Fixed known fields
         self._artist = QLineEdit(self._release["artist"])
         self._year_recorded = QLineEdit(self._release["year_recorded"])
         self._year_recorded.setMaxLength(4)
@@ -85,25 +214,34 @@ class EditReleaseDialog(QDialog):
         else:
             self._disc_number = None
 
-        # Dynamic extra fields from current mask
-        self._extra_edits: dict[str, QLineEdit] = {}
         for token in self._extra_tokens:
             edit = QLineEdit(self._extras_current.get(token, ""))
             label = token.replace("_", " ").title() + ":"
             form.addRow(label, edit)
+            if not hasattr(self, "_extra_edits"):
+                self._extra_edits: dict[str, QLineEdit] = {}
             self._extra_edits[token] = edit
 
-        layout.addLayout(form)
+        if not hasattr(self, "_extra_edits"):
+            self._extra_edits = {}
+
+        form_col.addLayout(form)
+        form_col.addStretch()
 
         self._preview = QLabel()
         self._preview.setWordWrap(True)
-        self._preview.setStyleSheet("color: palette(placeholderText); margin-top: 8px;")
-        layout.addWidget(self._preview)
+        self._preview.setStyleSheet("color: palette(placeholderText); margin-top: 4px;")
+        form_col.addWidget(self._preview)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        row.addLayout(form_col, stretch=3)
+        root.addLayout(row)
+
+        # ── Buttons ───────────────────────────────────────────────────────
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save |
+                                   QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        root.addWidget(buttons)
 
         for w in (self._artist, self._year_recorded, self._title,
                   self._catalog, self._media, self._year_released):
@@ -112,6 +250,9 @@ class EditReleaseDialog(QDialog):
             edit.textChanged.connect(self._update_preview)
 
         self._update_preview()
+
+    def _on_cover_changed(self, path: str):
+        self._cover_source_path = path
 
     def _all_fields(self) -> dict:
         fields = {
@@ -134,6 +275,14 @@ class EditReleaseDialog(QDialog):
             self._preview.setText(f"Folder: {parent_name}/{child_name}")
         else:
             self._preview.setText(f"Folder: {parent_name}")
+
+    def _save_cover(self, new_cover_key: str):
+        """Persist cover after folder rename (key may have changed)."""
+        if self._cover_source_path:
+            _covers.save_cover(self._db.covers_dir, new_cover_key, self._cover_source_path)
+        elif new_cover_key != self._cover_key:
+            # Folder renamed — rename the stored cover to match new key
+            _covers.rename_cover(self._db.covers_dir, self._cover_key, new_cover_key)
 
     def _on_save(self):
         fields = self._all_fields()
@@ -179,8 +328,8 @@ class EditReleaseDialog(QDialog):
         new_name = _build_folder_name(
             {"artist": artist, "year_recorded": year_recorded, "title": title,
              "catalog_number": catalog or "", "media": media or "",
-             "year_released": year_released or "", **{t: self._extra_edits[t].text().strip()
-                                                       for t in self._extra_edits}},
+             "year_released": year_released or "",
+             **{t: self._extra_edits[t].text().strip() for t in self._extra_edits}},
             self._mask,
         )
         new_path = old_path.parent / new_name
@@ -205,6 +354,7 @@ class EditReleaseDialog(QDialog):
             catalog_number=catalog, media=media, year_released=year_released,
             extras=extras_json, disc_number=disc_number,
         )
+        self._save_cover(str(new_path))
         self.accept()
 
     def _save_disc_child(self, artist, year_recorded, title, catalog, media,
@@ -219,8 +369,8 @@ class EditReleaseDialog(QDialog):
         new_parent_name = _build_folder_name(
             {"artist": artist, "year_recorded": year_recorded, "title": title,
              "catalog_number": catalog or "", "media": media or "",
-             "year_released": year_released or "", **{t: self._extra_edits[t].text().strip()
-                                                       for t in self._extra_edits}},
+             "year_released": year_released or "",
+             **{t: self._extra_edits[t].text().strip() for t in self._extra_edits}},
             self._mask,
         )
         new_parent = old_parent.parent / new_parent_name
@@ -239,23 +389,21 @@ class EditReleaseDialog(QDialog):
         else:
             new_parent = old_parent
 
-        # Update parent metadata + disc children paths in DB
         self._db.rename_release(
             str(old_parent), str(new_parent),
             artist=artist, year_recorded=year_recorded, title=title,
             catalog_number=catalog, media=media, year_released=year_released,
             extras=extras_json, disc_number=0,
         )
-        # Propagate metadata to all disc children (artist, title, etc.)
         self._db.update_disc_children_metadata(
             str(new_parent),
             artist=artist, year_recorded=year_recorded, title=title,
             catalog_number=catalog, media=media, year_released=year_released,
             extras=extras_json,
         )
-        # Update disc_number for this specific disc child (path may have changed)
         child_name = Path(self._release["folder_path"]).name
         new_child_path = str(new_parent / child_name)
         self._db.rename_release(new_child_path, new_child_path, disc_number=disc_number)
 
+        self._save_cover(str(new_parent))
         self.accept()

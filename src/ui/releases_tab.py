@@ -608,6 +608,11 @@ class ReleasesTab(QWidget):
 
         menu.addSeparator()
 
+        act_edit = menu.addAction("Edit Release…")
+        act_edit.setEnabled(available)
+
+        menu.addSeparator()
+
         act_delete = menu.addAction("Move to Trash")
 
         chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
@@ -617,6 +622,8 @@ class ReleasesTab(QWidget):
             _play_release(row["folder_path"], player_path)
         elif chosen == act_open:
             self._open_release()
+        elif chosen == act_edit:
+            self._edit_release()
         elif chosen == act_delete:
             self._trash_release()
 

@@ -126,9 +126,13 @@ class _CoverWidget(QWidget):
             if path:
                 self._load_from_path(path)
 
+    def set_browse_root(self, directory: str):
+        self._browse_root = directory
+
     def _browse(self):
+        root = getattr(self, "_browse_root", "")
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Cover Image", "",
+            self, "Select Cover Image", root,
             "Images (*.jpg *.jpeg *.png *.bmp *.tiff *.tif *.webp)",
         )
         if path:
@@ -158,7 +162,7 @@ class EditReleaseDialog(QDialog):
         # Key used to look up / save the cover (parent folder for disc children)
         self._cover_key = release.get("parent_path") or release["folder_path"]
 
-        self.setWindowTitle("Edit Release")
+        self.setWindowTitle("Release Info")
         self.setMinimumWidth(560)
         self._setup_ui()
 
@@ -177,6 +181,7 @@ class EditReleaseDialog(QDialog):
         existing = _covers.load_cover_for_widget(self._db.covers_dir, self._cover_key, 600)
         if existing:
             self._cover.set_pixmap(existing)
+        self._cover.set_browse_root(release.get("source_path") or "")
         row.addWidget(self._cover, stretch=2)
 
         # Form column

@@ -536,7 +536,7 @@ class ReleasesTab(QWidget):
 
         btn_row = QHBoxLayout()
 
-        edit_btn = QPushButton("Release Info…")
+        edit_btn = QPushButton("Release Info")
         edit_btn.setToolTip("View/edit release info (double-click)")
         edit_btn.clicked.connect(self._edit_release)
         btn_row.addWidget(edit_btn)
@@ -608,7 +608,7 @@ class ReleasesTab(QWidget):
 
         menu.addSeparator()
 
-        act_edit = menu.addAction("Release Info…")
+        act_edit = menu.addAction("Release Info")
         act_edit.setEnabled(available)
 
         menu.addSeparator()

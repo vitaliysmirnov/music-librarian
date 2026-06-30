@@ -405,13 +405,13 @@ class EditReleaseDialog(QDialog):
     def _save_regular(self, artist, year_recorded, title, catalog, media,
                       year_released, extras_json, disc_number):
         old_path = Path(self._release["folder_path"])
-        new_name = _build_folder_name(
+        new_name = unicodedata.normalize("NFC", _build_folder_name(
             {"artist": artist, "year_recorded": year_recorded, "title": title,
              "catalog_number": catalog or "", "media": media or "",
              "year_released": year_released or "",
              **{t: self._extra_edits[t].text().strip() for t in self._extra_edits}},
             self._mask,
-        )
+        ))
         new_path = old_path.parent / new_name
 
         if self._release["is_available"]:
@@ -430,12 +430,13 @@ class EditReleaseDialog(QDialog):
         elif not self._release["is_available"]:
             new_path = old_path
 
-        self._db.rename_release(
+        found = self._db.rename_release(
             str(old_path), str(new_path),
             artist=artist, year_recorded=year_recorded, title=title,
             catalog_number=catalog, media=media, year_released=year_released,
             extras=extras_json, disc_number=disc_number,
         )
+        log.debug("Dialog rename_release: old=%r new=%r found=%s", str(old_path), str(new_path), found)
         if self._release.get("is_multi_disc"):
             self._db.update_disc_children_metadata(
                 str(new_path),
@@ -457,13 +458,13 @@ class EditReleaseDialog(QDialog):
             return
 
         old_parent = Path(parent_path_str)
-        new_parent_name = _build_folder_name(
+        new_parent_name = unicodedata.normalize("NFC", _build_folder_name(
             {"artist": artist, "year_recorded": year_recorded, "title": title,
              "catalog_number": catalog or "", "media": media or "",
              "year_released": year_released or "",
              **{t: self._extra_edits[t].text().strip() for t in self._extra_edits}},
             self._mask,
-        )
+        ))
         new_parent = old_parent.parent / new_parent_name
 
         if parent_row["is_available"]:

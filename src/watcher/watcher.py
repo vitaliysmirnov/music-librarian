@@ -166,7 +166,7 @@ class LibraryWatcher:
             if src_ok and dst_ok:
                 parsed = parse_folder_name(Path(dst).name, pattern)
                 if parsed:
-                    self._db.rename_release(
+                    found = self._db.rename_release(
                         src, dst,
                         artist=parsed.artist,
                         year_recorded=parsed.year_recorded,
@@ -176,7 +176,10 @@ class LibraryWatcher:
                         year_released=parsed.year_released,
                         extras=json.dumps(parsed.extras, ensure_ascii=False),
                     )
-                    log.info("Watcher: renamed: %s → %s", src, dst)
+                    if found:
+                        log.info("Watcher: renamed: %s → %s", src, dst)
+                    else:
+                        log.info("Watcher: rename no-op (src not in DB): %s → %s", src, dst)
                 else:
                     self._db.delete_release_by_path(src)
                     log.info("Watcher: renamed to unparseable, removed: %s", src)

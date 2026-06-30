@@ -267,14 +267,17 @@ class Database:
                 ),
             )
 
-    def rename_release(self, old_path: str, new_path: str, **fields):
+    def rename_release(self, old_path: str, new_path: str, **fields) -> bool:
+        old_path = unicodedata.normalize("NFC", old_path)
+        new_path = unicodedata.normalize("NFC", new_path)
         now = datetime.now().isoformat(timespec="seconds")
         with self.conn() as c:
             row = c.execute(
                 "SELECT id FROM releases WHERE folder_path=?", (old_path,)
             ).fetchone()
             if not row:
-                return
+                log.debug("rename_release: NOT FOUND old_path=%r", old_path)
+                return False
             sets = ", ".join(f"{k}=?" for k in fields)
             vals = list(fields.values()) + [new_path, new_path, now, old_path]
             c.execute(
@@ -293,13 +296,16 @@ class Database:
                     "UPDATE releases SET folder_path=?, last_seen_path=?, parent_path=?, modified_at=? WHERE id=?",
                     (new_child, new_child, new_path, now, child["id"]),
                 )
+        return True
 
     def delete_release_by_path(self, folder_path: str):
         with self.conn() as c:
-            c.execute(
+            cur = c.execute(
                 "DELETE FROM releases WHERE folder_path=? OR parent_path=?",
                 (folder_path, folder_path),
             )
+            if cur.rowcount:
+                log.debug("delete_release_by_path: deleted %d row(s) for %r", cur.rowcount, folder_path)
 
     def set_release_availability(self, folder_path: str, available: bool):
         with self.conn() as c:

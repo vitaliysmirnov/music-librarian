@@ -150,6 +150,11 @@ class LibraryWatcher:
         if kind == "deleted":
             if not _parent_is_source_or_artist(src, source_path):
                 return False
+            # Skip if the folder still exists on disk — macOS FSEvents can fire a
+            # spurious DirDeletedEvent for a path that was only briefly absent
+            # during a rapid rename sequence.
+            if Path(src).exists():
+                return False
             self._db.delete_release_by_path(src)
             log.info("Watcher: deleted release: %s", src)
             return True

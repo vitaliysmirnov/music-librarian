@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import unicodedata
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -124,19 +125,23 @@ class Database:
                         "UPDATE releases SET parent_path=? WHERE id=?", (nfc, row["id"])
                     )
 
-            # Rename cover files whose on-disk names were keyed by NFD path hashes
-            # (saved before paths were NFC-normalised) to their NFC-keyed equivalents.
-            from src.utils.covers import migrate_nfd_covers
-            all_paths = [r["folder_path"] for r in
-                         c.execute("SELECT folder_path FROM releases").fetchall()]
-            migrate_nfd_covers(self.covers_dir, all_paths)
-
             # Remove {country} that was mistakenly shipped as part of the default mask
             old = "{artist} - {year_recorded} - {title} [{catalog_number}] [{media}] ({year_released}) {country}"
             new = "{artist} - {year_recorded} - {title} [{catalog_number}] [{media}] ({year_released})"
             row = c.execute("SELECT value FROM settings WHERE key='folder_mask'").fetchone()
             if row and row["value"] == old:
                 c.execute("UPDATE settings SET value=? WHERE key='folder_mask'", (new,))
+
+        # Rename cover files from NFD-keyed to NFC-keyed names — runs after the
+        # DB transaction commits so a filesystem error here cannot roll it back.
+        try:
+            from src.utils.covers import migrate_nfd_covers
+            with self.conn() as c:
+                all_paths = [r["folder_path"] for r in
+                             c.execute("SELECT folder_path FROM releases").fetchall()]
+            migrate_nfd_covers(self.covers_dir, all_paths)
+        except Exception:
+            log.warning("Cover NFD→NFC file migration failed (will retry on next startup)")
 
     @contextmanager
     def conn(self) -> Iterator[sqlite3.Connection]:
@@ -226,6 +231,12 @@ class Database:
         now = datetime.now().isoformat(timespec="seconds")
         extras_json = json.dumps(extras or {}, ensure_ascii=False)
         with self.conn() as c:
+            # Remove any stale NFD-keyed entry before inserting the NFC version so
+            # macOS NFD/NFC path variance never creates duplicate rows.
+            nfd = unicodedata.normalize("NFD", folder_path)
+            if nfd != folder_path:
+                c.execute("DELETE FROM releases WHERE parent_path=?", (nfd,))
+                c.execute("DELETE FROM releases WHERE folder_path=?", (nfd,))
             c.execute(
                 """
                 INSERT INTO releases

@@ -332,6 +332,18 @@ class EditReleaseDialog(QDialog):
             # Folder renamed — rename the stored cover to match new key
             _covers.rename_cover(self._db.covers_dir, self._cover_key, new_cover_key)
 
+    def _rename_disc_children_covers(self, old_parent: str, new_parent: str,
+                                      skip_child: str | None = None):
+        """Rename cover files for disc children after their parent folder is renamed."""
+        if old_parent == new_parent:
+            return
+        for child in self._db.get_disc_entries(new_parent):
+            child_name = Path(child["folder_path"]).name
+            old_child_path = str(Path(old_parent) / child_name)
+            if skip_child and child["folder_path"] == skip_child:
+                continue
+            _covers.rename_cover(self._db.covers_dir, old_child_path, child["folder_path"])
+
     def _maybe_apply_cover_to_discs(self, parent_path: str):
         """For multi-disc containers: ask whether to propagate the cover to disc children."""
         if not self._release.get("is_multi_disc") or not self._cover_source_path:
@@ -424,7 +436,15 @@ class EditReleaseDialog(QDialog):
             catalog_number=catalog, media=media, year_released=year_released,
             extras=extras_json, disc_number=disc_number,
         )
+        if self._release.get("is_multi_disc"):
+            self._db.update_disc_children_metadata(
+                str(new_path),
+                artist=artist, year_recorded=year_recorded, title=title,
+                catalog_number=catalog, media=media, year_released=year_released,
+                extras=extras_json,
+            )
         self._save_cover(str(new_path))
+        self._rename_disc_children_covers(str(old_path), str(new_path))
         self._maybe_apply_cover_to_discs(str(new_path))
         self.accept()
 
@@ -479,4 +499,6 @@ class EditReleaseDialog(QDialog):
         self._db.rename_release(new_child_path, new_child_path, disc_number=disc_number)
 
         self._save_cover(new_child_path)
+        self._rename_disc_children_covers(str(old_parent), str(new_parent),
+                                          skip_child=new_child_path)
         self.accept()

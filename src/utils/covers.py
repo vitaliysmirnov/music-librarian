@@ -1,4 +1,5 @@
 import hashlib
+import unicodedata
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize
@@ -8,7 +9,25 @@ _MAX_PX = 600  # max stored dimension
 
 
 def _key(folder_path: str) -> str:
-    return hashlib.sha256(folder_path.encode()).hexdigest()[:16]
+    # Always hash the NFC form so the key is stable across NFD/NFC path variants.
+    return hashlib.sha256(unicodedata.normalize("NFC", folder_path).encode()).hexdigest()[:16]
+
+
+def migrate_nfd_covers(covers_dir: Path, folder_paths: list) -> None:
+    """Rename cover files that were keyed by NFD path hash to the NFC path hash.
+
+    Needed once after the DB path-normalisation migration: old covers were saved
+    before paths were NFC-normalised, so their on-disk filenames use NFD hashes.
+    """
+    for fp in folder_paths:
+        nfc = unicodedata.normalize("NFC", fp)
+        nfd = unicodedata.normalize("NFD", fp)
+        if nfc == nfd:
+            continue
+        old = covers_dir / f"{hashlib.sha256(nfd.encode()).hexdigest()[:16]}.jpg"
+        new = covers_dir / f"{hashlib.sha256(nfc.encode()).hexdigest()[:16]}.jpg"
+        if old.exists() and not new.exists():
+            old.rename(new)
 
 
 def cover_path(covers_dir: Path, folder_path: str) -> Path:

@@ -7,7 +7,7 @@ from PySide6.QtGui import QPainter, QPen, QColor, QPixmap
 from PySide6.QtWidgets import (
     QDialog, QFormLayout, QLineEdit, QDialogButtonBox,
     QLabel, QMessageBox, QVBoxLayout, QHBoxLayout,
-    QSizePolicy, QFileDialog, QWidget,
+    QSizePolicy, QFileDialog, QWidget, QPushButton,
 )
 
 from src.database.db import Database
@@ -94,6 +94,8 @@ class _CoverWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
+        painter.fillRect(self.rect(), self.palette().window())
+
         side = min(self.width(), self.height())
         x = (self.width() - side) // 2
         y = (self.height() - side) // 2
@@ -138,6 +140,9 @@ class _CoverWidget(QWidget):
     def set_browse_root(self, directory: str):
         self._browse_root = directory
 
+    def browse(self):
+        self._browse()
+
     def _browse(self):
         root = getattr(self, "_browse_root", "")
         path, _ = QFileDialog.getOpenFileName(
@@ -167,6 +172,7 @@ class EditReleaseDialog(QDialog):
         self._extras_current = _load_extras(release)
         self._is_disc_child = bool(release.get("parent_path"))
         self._cover_source_path: str | None = None  # set when user picks a new cover
+        self._cover_deleted = False
 
         # Each release (including disc children) stores its cover by its own folder_path.
         # Disc children fall back to the parent's cover when their own is absent.
@@ -187,11 +193,27 @@ class EditReleaseDialog(QDialog):
 
         self._cover = _CoverWidget()
         self._cover.cover_changed.connect(self._on_cover_changed)
-        existing = _covers.load_cover_for_widget(self._db.covers_dir, self._cover_key, 600)
-        if existing:
-            self._cover.set_pixmap(existing)
+        existing_own = _covers.load_cover_for_widget(self._db.covers_dir, self._cover_key, 600)
+        if existing_own:
+            self._cover.set_pixmap(existing_own)
         self._cover.set_browse_root(self._release.get("source_path") or "")
-        row.addWidget(self._cover, stretch=2)
+
+        cover_col = QVBoxLayout()
+        cover_col.setSpacing(4)
+        cover_col.addWidget(self._cover)
+
+        cover_btns = QHBoxLayout()
+        cover_btns.setSpacing(6)
+        self._btn_set_cover = QPushButton("Set Cover")
+        self._btn_remove_cover = QPushButton("Remove Cover")
+        self._btn_set_cover.clicked.connect(self._cover.browse)
+        self._btn_remove_cover.clicked.connect(self._on_remove_cover)
+        self._btn_remove_cover.setEnabled(existing_own is not None)
+        cover_btns.addWidget(self._btn_set_cover)
+        cover_btns.addWidget(self._btn_remove_cover)
+        cover_col.addLayout(cover_btns)
+
+        row.addLayout(cover_col, stretch=2)
 
         # Form column
         form_col = QVBoxLayout()
@@ -267,6 +289,14 @@ class EditReleaseDialog(QDialog):
 
     def _on_cover_changed(self, path: str):
         self._cover_source_path = path
+        self._cover_deleted = False
+        self._btn_remove_cover.setEnabled(True)
+
+    def _on_remove_cover(self):
+        self._cover.set_pixmap(None)
+        self._cover_source_path = None
+        self._cover_deleted = True
+        self._btn_remove_cover.setEnabled(False)
 
     def _all_fields(self) -> dict:
         fields = {
@@ -292,7 +322,11 @@ class EditReleaseDialog(QDialog):
 
     def _save_cover(self, new_cover_key: str):
         """Persist cover after folder rename (key may have changed)."""
-        if self._cover_source_path:
+        if self._cover_deleted:
+            _covers.delete_cover(self._db.covers_dir, self._cover_key)
+            if new_cover_key != self._cover_key:
+                _covers.delete_cover(self._db.covers_dir, new_cover_key)
+        elif self._cover_source_path:
             _covers.save_cover(self._db.covers_dir, new_cover_key, self._cover_source_path)
         elif new_cover_key != self._cover_key:
             # Folder renamed — rename the stored cover to match new key
@@ -306,18 +340,13 @@ class EditReleaseDialog(QDialog):
         if not children:
             return
 
-        from PySide6.QtWidgets import QPushButton
-        box = QMessageBox(self)
-        box.setWindowTitle("Cover Art")
-        box.setText("Apply this cover to disc children as well?")
-        box.setInformativeText(
-            'Choose "All discs" to use the same cover for every disc.\n'
-            'Choose "This release only" to keep disc covers independent.'
+        reply = QMessageBox.question(
+            self, "Cover Art",
+            "Apply this cover to all discs in this release too?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,  # default: No — safer choice
         )
-        btn_all = box.addButton("All discs", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("This release only", QMessageBox.ButtonRole.RejectRole)
-        box.exec()
-        if box.clickedButton() is btn_all:
+        if reply == QMessageBox.StandardButton.Yes:
             for child in children:
                 _covers.save_cover(
                     self._db.covers_dir, child["folder_path"], self._cover_source_path
@@ -449,5 +478,5 @@ class EditReleaseDialog(QDialog):
         new_child_path = str(new_parent / child_name)
         self._db.rename_release(new_child_path, new_child_path, disc_number=disc_number)
 
-        self._save_cover(str(new_parent))
+        self._save_cover(new_child_path)
         self.accept()

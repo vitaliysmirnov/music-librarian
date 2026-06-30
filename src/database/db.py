@@ -124,6 +124,13 @@ class Database:
                         "UPDATE releases SET parent_path=? WHERE id=?", (nfc, row["id"])
                     )
 
+            # Rename cover files whose on-disk names were keyed by NFD path hashes
+            # (saved before paths were NFC-normalised) to their NFC-keyed equivalents.
+            from src.utils.covers import migrate_nfd_covers
+            all_paths = [r["folder_path"] for r in
+                         c.execute("SELECT folder_path FROM releases").fetchall()]
+            migrate_nfd_covers(self.covers_dir, all_paths)
+
             # Remove {country} that was mistakenly shipped as part of the default mask
             old = "{artist} - {year_recorded} - {title} [{catalog_number}] [{media}] ({year_released}) {country}"
             new = "{artist} - {year_recorded} - {title} [{catalog_number}] [{media}] ({year_released})"

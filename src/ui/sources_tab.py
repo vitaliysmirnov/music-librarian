@@ -119,6 +119,5 @@ class SourcesTab(QWidget):
         self.sources_changed.emit()
 
     def _toggle_enabled(self, source_id: int, state: int):
-        enabled = state == Qt.Checked.value if hasattr(Qt.Checked, "value") else bool(state)
-        self._db.set_source_enabled(source_id, enabled)
+        self._db.set_source_enabled(source_id, bool(state))
         self.sources_changed.emit()

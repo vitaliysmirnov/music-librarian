@@ -177,6 +177,7 @@ class EditReleaseDialog(QDialog):
         # Each release (including disc children) stores its cover by its own folder_path.
         # Disc children fall back to the parent's cover when their own is absent.
         self._cover_key = release["folder_path"]
+        self._extra_edits: dict[str, QLineEdit] = {}
 
         self.setWindowTitle("Release Info")
         self.setMinimumWidth(560)
@@ -252,14 +253,8 @@ class EditReleaseDialog(QDialog):
 
         for token in self._extra_tokens:
             edit = QLineEdit(self._extras_current.get(token, ""))
-            label = token.replace("_", " ").title() + ":"
-            form.addRow(label, edit)
-            if not hasattr(self, "_extra_edits"):
-                self._extra_edits: dict[str, QLineEdit] = {}
+            form.addRow(token.replace("_", " ").title() + ":", edit)
             self._extra_edits[token] = edit
-
-        if not hasattr(self, "_extra_edits"):
-            self._extra_edits = {}
 
         form_col.addLayout(form)
         form_col.addStretch()
@@ -297,6 +292,20 @@ class EditReleaseDialog(QDialog):
         self._cover_source_path = None
         self._cover_deleted = True
         self._btn_remove_cover.setEnabled(False)
+
+    def _make_new_folder_name(self, artist: str, year_recorded: str, title: str,
+                              catalog: str | None, media: str | None,
+                              year_released: str | None) -> str:
+        """Build and NFC-normalise the new folder name from current field values."""
+        return unicodedata.normalize("NFC", _build_folder_name(
+            {
+                "artist": artist, "year_recorded": year_recorded, "title": title,
+                "catalog_number": catalog or "", "media": media or "",
+                "year_released": year_released or "",
+                **{t: self._extra_edits[t].text().strip() for t in self._extra_edits},
+            },
+            self._mask,
+        ))
 
     def _all_fields(self) -> dict:
         fields = {
@@ -405,13 +414,7 @@ class EditReleaseDialog(QDialog):
     def _save_regular(self, artist, year_recorded, title, catalog, media,
                       year_released, extras_json, disc_number):
         old_path = Path(self._release["folder_path"])
-        new_name = unicodedata.normalize("NFC", _build_folder_name(
-            {"artist": artist, "year_recorded": year_recorded, "title": title,
-             "catalog_number": catalog or "", "media": media or "",
-             "year_released": year_released or "",
-             **{t: self._extra_edits[t].text().strip() for t in self._extra_edits}},
-            self._mask,
-        ))
+        new_name = self._make_new_folder_name(artist, year_recorded, title, catalog, media, year_released)
         new_path = old_path.parent / new_name
 
         if self._release["is_available"]:
@@ -458,13 +461,7 @@ class EditReleaseDialog(QDialog):
             return
 
         old_parent = Path(parent_path_str)
-        new_parent_name = unicodedata.normalize("NFC", _build_folder_name(
-            {"artist": artist, "year_recorded": year_recorded, "title": title,
-             "catalog_number": catalog or "", "media": media or "",
-             "year_released": year_released or "",
-             **{t: self._extra_edits[t].text().strip() for t in self._extra_edits}},
-            self._mask,
-        ))
+        new_parent_name = self._make_new_folder_name(artist, year_recorded, title, catalog, media, year_released)
         new_parent = old_parent.parent / new_parent_name
 
         if parent_row["is_available"]:

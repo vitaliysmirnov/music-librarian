@@ -163,7 +163,6 @@ def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, in
                     is_multi_disc=False,
                     parent_path=path_str,
                 )
-                log.debug("  disc %d: %s", disc_num, disc_dir.name)
         if existing is None:
             log.info("Added release%s: %s", " (multi-disc)" if is_multi else "", entry.name)
             added += 1

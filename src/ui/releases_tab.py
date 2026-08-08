@@ -185,7 +185,7 @@ class ReleasesModel(QAbstractTableModel):
     #   0              → COL_PLAY (play button)
     #   1 … N_KNOWN    → known tokens in mask order
     #   N_KNOWN+1 …    → custom (extra) tokens
-    #   … tail         → Source, Available, Path
+    #   … tail         → Disc, Source, Available, Path  (offsets 0-3)
 
     def _n_known(self) -> int:
         return len(self._token_order)
@@ -194,17 +194,20 @@ class ReleasesModel(QAbstractTableModel):
         """Return the logical column index for a known token (1-based after COL_PLAY)."""
         return 1 + self._token_order.index(token)
 
-    def _col_disc(self) -> int:
+    def _tail_base(self) -> int:
         return 1 + self._n_known() + len(self._extra_tokens)
 
+    def _col_disc(self) -> int:
+        return self._tail_base()
+
     def _col_source(self) -> int:
-        return 1 + self._n_known() + len(self._extra_tokens) + 1
+        return self._tail_base() + 1
 
     def _col_avail(self) -> int:
-        return 1 + self._n_known() + len(self._extra_tokens) + 2
+        return self._tail_base() + 2
 
     def _col_path(self) -> int:
-        return 1 + self._n_known() + len(self._extra_tokens) + 3
+        return self._tail_base() + 3
 
     def _all_headers(self) -> list[str]:
         known_hdrs  = [_TOKEN_HEADER[t] for t in self._token_order]
@@ -474,6 +477,7 @@ class ReleasesTab(QWidget):
         super().__init__()
         self._db = db
         self._expanded: set[str] = set()
+        self._header_state: QByteArray | None = None  # in-memory cache
         self._setup_ui()
         self._restore_header_state()
 
@@ -666,15 +670,22 @@ class ReleasesTab(QWidget):
 
     def _save_header_state(self, *_):
         state: QByteArray = self._table.horizontalHeader().saveState()
+        if self._header_state is not None and state == self._header_state:
+            return  # nothing changed — skip the DB write
+        self._header_state = state
         self._db.set_setting(SETTINGS_KEY, state.toBase64().data().decode())
 
     def _restore_header_state(self):
-        raw = self._db.get_setting(SETTINGS_KEY, "")
-        if not raw:
-            return
+        if self._header_state is None:
+            raw = self._db.get_setting(SETTINGS_KEY, "")
+            if not raw:
+                return
+            try:
+                self._header_state = QByteArray.fromBase64(raw.encode())
+            except Exception:
+                return
         try:
-            data = QByteArray.fromBase64(raw.encode())
-            self._table.horizontalHeader().restoreState(data)
+            self._table.horizontalHeader().restoreState(self._header_state)
         except Exception:
             pass
         hdr = self._table.horizontalHeader()
@@ -687,6 +698,7 @@ class ReleasesTab(QWidget):
             self._save_header_state()
 
     def invalidate_header_state(self):
+        self._header_state = None
         self._db.set_setting(SETTINGS_KEY, "")
 
     def _reset_header(self):

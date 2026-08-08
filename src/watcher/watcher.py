@@ -120,7 +120,6 @@ class LibraryWatcher:
             self._on_change()
 
     def _handle(self, kind: str, src: str, dst: str) -> bool:
-        # Determine which source this path belongs to
         source_id, source_path, pattern = self._source_for(src) or (None, None, None)
         if source_id is None and kind == "moved":
             source_id, source_path, pattern = self._source_for(dst) or (None, None, None)
@@ -128,84 +127,94 @@ class LibraryWatcher:
             return False
 
         if kind == "created":
-            if not _is_release_path(src, source_path, pattern):
-                return False
-            parsed = parse_folder_name(Path(src).name, pattern)
-            if not parsed:
-                return False
-            self._db.upsert_release(
-                source_id=source_id,
-                artist=parsed.artist,
-                year_recorded=parsed.year_recorded,
-                title=parsed.title,
-                catalog_number=parsed.catalog_number,
-                media=parsed.media,
-                year_released=parsed.year_released,
-                folder_path=src,
-                extras=parsed.extras,
-            )
-            log.info("Watcher: added release: %s", src)
-            return True
-
+            return self._handle_created(src, source_id, source_path, pattern)
         if kind == "deleted":
-            if not _parent_is_source_or_artist(src, source_path):
-                return False
-            # Skip if the folder still exists on disk — macOS FSEvents can fire a
-            # spurious DirDeletedEvent for a path that was only briefly absent
-            # during a rapid rename sequence.
-            if Path(src).exists():
-                return False
-            self._db.delete_release_by_path(src)
-            log.info("Watcher: deleted release: %s", src)
+            return self._handle_deleted(src, source_path)
+        if kind == "moved":
+            return self._handle_moved(src, dst, source_id, source_path, pattern)
+        return False
+
+    def _handle_created(self, src: str, source_id: int, source_path: str,
+                        pattern) -> bool:
+        if not _is_release_path(src, source_path, pattern):
+            return False
+        parsed = parse_folder_name(Path(src).name, pattern)
+        if not parsed:
+            return False
+        self._db.upsert_release(
+            source_id=source_id,
+            artist=parsed.artist,
+            year_recorded=parsed.year_recorded,
+            title=parsed.title,
+            catalog_number=parsed.catalog_number,
+            media=parsed.media,
+            year_released=parsed.year_released,
+            folder_path=src,
+            extras=parsed.extras,
+        )
+        log.info("Watcher: added release: %s", src)
+        return True
+
+    def _handle_deleted(self, src: str, source_path: str) -> bool:
+        if not _parent_is_source_or_artist(src, source_path):
+            return False
+        # Skip if the folder still exists on disk — macOS FSEvents can fire a
+        # spurious DirDeletedEvent for a path that was only briefly absent
+        # during a rapid rename sequence.
+        if Path(src).exists():
+            return False
+        self._db.delete_release_by_path(src)
+        log.info("Watcher: deleted release: %s", src)
+        return True
+
+    def _handle_moved(self, src: str, dst: str, source_id: int,
+                      source_path: str, pattern) -> bool:
+        src_ok = _is_release_path(src, source_path, pattern)
+        dst_ok = _is_release_path(dst, source_path, pattern)
+
+        if src_ok and dst_ok:
+            parsed = parse_folder_name(Path(dst).name, pattern)
+            if parsed:
+                found = self._db.rename_release(
+                    src, dst,
+                    artist=parsed.artist,
+                    year_recorded=parsed.year_recorded,
+                    title=parsed.title,
+                    catalog_number=parsed.catalog_number,
+                    media=parsed.media,
+                    year_released=parsed.year_released,
+                    extras=json.dumps(parsed.extras, ensure_ascii=False),
+                )
+                if found:
+                    log.info("Watcher: renamed: %s → %s", src, dst)
+                else:
+                    log.info("Watcher: rename no-op (src not in DB): %s → %s", src, dst)
+            else:
+                self._db.delete_release_by_path(src)
+                log.info("Watcher: renamed to unparseable, removed: %s", src)
             return True
 
-        if kind == "moved":
-            src_ok = _is_release_path(src, source_path, pattern)
-            dst_ok = _is_release_path(dst, source_path, pattern)
+        if src_ok:
+            self._db.delete_release_by_path(src)
+            log.info("Watcher: release moved out: %s", src)
+            return True
 
-            if src_ok and dst_ok:
-                parsed = parse_folder_name(Path(dst).name, pattern)
-                if parsed:
-                    found = self._db.rename_release(
-                        src, dst,
-                        artist=parsed.artist,
-                        year_recorded=parsed.year_recorded,
-                        title=parsed.title,
-                        catalog_number=parsed.catalog_number,
-                        media=parsed.media,
-                        year_released=parsed.year_released,
-                        extras=json.dumps(parsed.extras, ensure_ascii=False),
-                    )
-                    if found:
-                        log.info("Watcher: renamed: %s → %s", src, dst)
-                    else:
-                        log.info("Watcher: rename no-op (src not in DB): %s → %s", src, dst)
-                else:
-                    self._db.delete_release_by_path(src)
-                    log.info("Watcher: renamed to unparseable, removed: %s", src)
+        if dst_ok:
+            parsed = parse_folder_name(Path(dst).name, pattern)
+            if parsed:
+                self._db.upsert_release(
+                    source_id=source_id,
+                    artist=parsed.artist,
+                    year_recorded=parsed.year_recorded,
+                    title=parsed.title,
+                    catalog_number=parsed.catalog_number,
+                    media=parsed.media,
+                    year_released=parsed.year_released,
+                    folder_path=dst,
+                    extras=parsed.extras,
+                )
+                log.info("Watcher: release moved in: %s", dst)
                 return True
-
-            if src_ok:
-                self._db.delete_release_by_path(src)
-                log.info("Watcher: release moved out: %s", src)
-                return True
-
-            if dst_ok:
-                parsed = parse_folder_name(Path(dst).name, pattern)
-                if parsed:
-                    self._db.upsert_release(
-                        source_id=source_id,
-                        artist=parsed.artist,
-                        year_recorded=parsed.year_recorded,
-                        title=parsed.title,
-                        catalog_number=parsed.catalog_number,
-                        media=parsed.media,
-                        year_released=parsed.year_released,
-                        folder_path=dst,
-                        extras=parsed.extras,
-                    )
-                    log.info("Watcher: release moved in: %s", dst)
-                    return True
 
         return False
 

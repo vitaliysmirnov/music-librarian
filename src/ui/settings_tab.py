@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 
 from src.database.db import Database
 from src.scanner.mask import DEFAULT_MASK, validate_mask, mask_to_regex, parse_with_mask
+from src.ui.theme import apply_theme
 from src.utils.logger import QtLogHandler, get_logger  # noqa: F401 (QtLogHandler used in type hints)
 
 log = get_logger()
@@ -29,7 +30,8 @@ _MAX_LOG_LINES = 500
 
 class SettingsTab(QWidget):
     settings_changed = Signal()
-    mask_changed = Signal()  # emitted when user applies a new mask
+    mask_changed = Signal()
+    theme_changed = Signal(str)
 
     def __init__(self, db: Database, qt_log_handler: QtLogHandler | None = None):
         super().__init__()
@@ -173,6 +175,27 @@ class SettingsTab(QWidget):
 
         layout.addWidget(player_box)
 
+        # ── Appearance ────────────────────────────────────────────────────
+        appearance_box = QGroupBox("Appearance")
+        appearance_layout = QVBoxLayout(appearance_box)
+        appearance_layout.setContentsMargins(12, 8, 12, 12)
+        appearance_layout.setSpacing(4)
+
+        self._theme_group = QButtonGroup(self)
+        self._theme_system_rb = QRadioButton("System")
+        self._theme_light_rb  = QRadioButton("Light")
+        self._theme_dark_rb   = QRadioButton("Dark")
+        for btn in (self._theme_system_rb, self._theme_light_rb, self._theme_dark_rb):
+            btn.setFocusPolicy(Qt.NoFocus)
+            appearance_layout.addWidget(btn)
+        self._theme_group.addButton(self._theme_system_rb, 0)
+        self._theme_group.addButton(self._theme_light_rb,  1)
+        self._theme_group.addButton(self._theme_dark_rb,   2)
+
+        self._theme_group.idToggled.connect(self._on_theme_changed)
+
+        layout.addWidget(appearance_box)
+
         # ── Log viewer ────────────────────────────────────────────────────
         log_box = QGroupBox("Log")
         log_layout = QVBoxLayout(log_box)
@@ -249,6 +272,14 @@ class SettingsTab(QWidget):
         self._interval_saved_label.setText("Saved")
         self._interval_saved_timer.start(2000)
         log.info("Settings: full scan interval set to %d min", value)
+
+    def _on_theme_changed(self, button_id: int, checked: bool):
+        if not checked:
+            return
+        theme = {0: "system", 1: "light", 2: "dark"}[button_id]
+        self._db.set_setting("theme", theme)
+        apply_theme(theme)
+        self.theme_changed.emit(theme)
 
     def _save_player(self):
         path = self._player_edit.text().strip()
@@ -331,6 +362,16 @@ class SettingsTab(QWidget):
         self._player_edit.blockSignals(True)
         self._player_edit.setText(self._db.get_setting("audio_player_path", ""))
         self._player_edit.blockSignals(False)
+
+        theme = self._db.get_setting("theme", "system")
+        rb = {
+            "system": self._theme_system_rb,
+            "light":  self._theme_light_rb,
+            "dark":   self._theme_dark_rb,
+        }.get(theme, self._theme_system_rb)
+        rb.blockSignals(True)
+        rb.setChecked(True)
+        rb.blockSignals(False)
 
         saved_mask = self._db.get_setting("folder_mask", DEFAULT_MASK)
         self._mask_edit.blockSignals(True)

@@ -57,6 +57,10 @@ def main():
     log.info("Music Librarian starting")
 
     db = Database(DATA_DIR / "music_library.db")
+
+    from src.ui.theme import apply_theme
+    apply_theme(db.get_setting("theme", "system"))
+
     window = MainWindow(db, qt_handler)
     window.show()
     code = app.exec()

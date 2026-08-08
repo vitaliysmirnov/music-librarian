@@ -125,6 +125,34 @@ class Database:
                         "UPDATE releases SET parent_path=? WHERE id=?", (nfc, row["id"])
                     )
 
+            # Ensure multi-disc containers have disc_number=0 (older entries may still
+            # have disc_number=1 because upsert_release previously omitted disc_number
+            # from the ON CONFLICT UPDATE SET, so containers added before this fix
+            # kept their original single-disc value of 1).
+            c.execute(
+                "UPDATE releases SET disc_number=0 WHERE is_multi_disc=1 AND disc_number != 0"
+            )
+
+            # Sync disc children's is_available to match their parent's value.  A disc
+            # child can end up unavailable while its parent is available (e.g. after a
+            # drive-disconnect event that ran set_releases_availability_by_source and
+            # was followed by a scan that restored only the parent via upsert_release).
+            # This one-time pass at startup keeps them consistent until the next scan.
+            c.execute(
+                """
+                UPDATE releases
+                SET is_available = (
+                    SELECT p.is_available FROM releases p
+                    WHERE p.folder_path = releases.parent_path
+                )
+                WHERE parent_path IS NOT NULL
+                  AND is_available != (
+                    SELECT p.is_available FROM releases p
+                    WHERE p.folder_path = releases.parent_path
+                  )
+                """
+            )
+
             # Remove {country} that was mistakenly shipped as part of the default mask
             old = "{artist} - {year_recorded} - {title} [{catalog_number}] [{media}] ({year_released}) {country}"
             new = "{artist} - {year_recorded} - {title} [{catalog_number}] [{media}] ({year_released})"
@@ -256,6 +284,7 @@ class Database:
                     is_available=1,
                     modified_at=excluded.modified_at,
                     extras=excluded.extras,
+                    disc_number=excluded.disc_number,
                     is_multi_disc=excluded.is_multi_disc,
                     parent_path=excluded.parent_path
                 """,

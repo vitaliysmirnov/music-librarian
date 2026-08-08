@@ -392,10 +392,17 @@ class _MultiSortProxy(QSortFilterProxyModel):
             if lv != rv:
                 return lv < rv
 
-        # Final tiebreaker: disc_number — containers (0) sort before disc children (1, 2, …)
-        lv_dn = (left_row.get("disc_number") or 0) if left_row else 0
-        rv_dn = (right_row.get("disc_number") or 0) if right_row else 0
-        return lv_dn < rv_dn
+        # Final tiebreaker: multi-disc container sorts before its disc children.
+        # Use is_multi_disc flag (not disc_number) so this holds even if disc_number
+        # was not yet updated to 0 in an older DB entry.
+        def _sort_dn(row) -> int:
+            if row is None:
+                return 0
+            if row.get("is_multi_disc"):
+                return -1  # container always before disc children
+            return row.get("disc_number") or 0
+
+        return _sort_dn(left_row) < _sort_dn(right_row)
 
 
 class _DragTableView(QTableView):

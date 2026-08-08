@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.scanner.scanner import scan_source
+from src.ui.style import ROW_HEIGHT, TABLE_STYLE
 from src.utils.logger import get_logger
 
 log = get_logger()
@@ -23,34 +24,47 @@ class SourcesTab(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         self._table = QTableWidget(0, 4)
         self._table.setHorizontalHeaderLabels(["Path", "Enabled", "Available", "Last Scan"])
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self._table.verticalHeader().setVisible(False)
+        self._table.setShowGrid(False)
+        self._table.setAlternatingRowColors(True)
+        self._table.setStyleSheet(TABLE_STYLE)
+        hdr = self._table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        hdr.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        vhdr = self._table.verticalHeader()
+        vhdr.setVisible(False)
+        vhdr.setDefaultSectionSize(ROW_HEIGHT)
+        vhdr.setMinimumSectionSize(ROW_HEIGHT)
         layout.addWidget(self._table)
 
-        btn_row = QHBoxLayout()
+        bottom_bar = QWidget()
+        bb = QHBoxLayout(bottom_bar)
+        bb.setContentsMargins(8, 4, 8, 4)
+        bb.setSpacing(4)
+
         add_btn = QPushButton("Add Source…")
         add_btn.clicked.connect(self._add_source)
-        btn_row.addWidget(add_btn)
+        bb.addWidget(add_btn)
 
         remove_btn = QPushButton("Remove Source")
         remove_btn.clicked.connect(self._remove_source)
-        btn_row.addWidget(remove_btn)
+        bb.addWidget(remove_btn)
 
         scan_btn = QPushButton("Scan Selected")
         scan_btn.clicked.connect(self._scan_selected)
-        btn_row.addWidget(scan_btn)
+        bb.addWidget(scan_btn)
 
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
+        bb.addStretch()
+        layout.addWidget(bottom_bar)
 
     def refresh(self):
         sources = self._db.get_sources()

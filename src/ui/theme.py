@@ -1,5 +1,6 @@
 import platform
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import QApplication
 
@@ -28,6 +29,23 @@ def _apply_macos(theme: str) -> None:
         NSApp.setAppearance_(appearance)
     except Exception:
         pass
+    # NSAppearance propagates asynchronously; give the run loop one tick
+    # to commit, then force Qt to re-read the platform palette and
+    # re-resolve all palette() references in stylesheets.
+    QTimer.singleShot(0, _force_qt_refresh)
+
+
+def _force_qt_refresh() -> None:
+    app = QApplication.instance()
+    if app is None:
+        return
+    # Re-creating the style makes Qt re-query the macOS platform palette.
+    app.setStyle(app.style().objectName())
+    # Re-polish every widget so stylesheet palette() tokens resolve fresh.
+    for widget in app.allWidgets():
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
 
 
 def _apply_palette(theme: str, app: QApplication) -> None:

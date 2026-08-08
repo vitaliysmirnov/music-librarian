@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from src.scanner.mask import DEFAULT_MASK, KNOWN_TOKENS, get_custom_tokens
 from src.ui.edit_release_dialog import EditReleaseDialog
+from src.ui.style import ROW_HEIGHT, TABLE_STYLE, SEARCH_STYLE
 
 # Column 0 is always the play button.
 COL_PLAY = 0
@@ -54,7 +55,7 @@ _TIEBREAKER_TOKENS = ["artist", "year_recorded", "title"]
 
 SETTINGS_KEY = "releases_header_state"
 
-_PLAY_WIDTH          = 64
+_PLAY_WIDTH          = 38
 _EXTRA_DEFAULT_WIDTH = 90
 
 _AUDIO_EXTENSIONS = {
@@ -328,7 +329,7 @@ class _PlayButtonDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option, index):
         if index.column() == COL_PLAY:
-            return QSize(_PLAY_WIDTH, 24)
+            return QSize(_PLAY_WIDTH, ROW_HEIGHT)
         return super().sizeHint(option, index)
 
     def editorEvent(self, event, model, option, index):
@@ -483,24 +484,27 @@ class ReleasesTab(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Search:"))
+        # ── Top toolbar ───────────────────────────────────────────────────
+        top_bar = QWidget()
+        tb = QHBoxLayout(top_bar)
+        tb.setContentsMargins(8, 5, 8, 5)
+        tb.setSpacing(6)
+        tb.addStretch()
+
         self._search = QLineEdit()
-        self._search.setPlaceholderText("Artist, title, or both words…")
+        self._search.setPlaceholderText("Search…")
+        self._search.setFixedWidth(220)
+        self._search.setClearButtonEnabled(True)
+        self._search.setStyleSheet(SEARCH_STYLE)
         self._search.textChanged.connect(self.refresh)
-        filter_row.addWidget(self._search)
+        tb.addWidget(self._search)
 
-        self._clear_btn = QPushButton("Clear")
-        self._clear_btn.clicked.connect(self._search.clear)
-        filter_row.addWidget(self._clear_btn)
-        filter_row.addStretch()
+        layout.addWidget(top_bar)
 
-        self._count_label = QLabel("")
-        filter_row.addWidget(self._count_label)
-        layout.addLayout(filter_row)
-
+        # ── Table ─────────────────────────────────────────────────────────
         self._model = ReleasesModel()
         self._proxy = _MultiSortProxy()
         self._proxy.setSourceModel(self._model)
@@ -511,8 +515,13 @@ class ReleasesTab(QWidget):
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
+        self._table.setShowGrid(False)
+        self._table.setStyleSheet(TABLE_STYLE)
         self._table.doubleClicked.connect(self._on_double_click)
-        self._table.verticalHeader().setVisible(False)
+        vhdr = self._table.verticalHeader()
+        vhdr.setVisible(False)
+        vhdr.setDefaultSectionSize(ROW_HEIGHT)
+        vhdr.setMinimumSectionSize(ROW_HEIGHT)
         self._table.setDragEnabled(True)
         self._table.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self._table.setDefaultDropAction(Qt.DropAction.CopyAction)
@@ -531,43 +540,53 @@ class ReleasesTab(QWidget):
         hdr.setStretchLastSection(False)
         hdr.setSectionResizeMode(QHeaderView.Interactive)
         hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
+        hdr.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         hdr.setContextMenuPolicy(Qt.CustomContextMenu)
         hdr.customContextMenuRequested.connect(self._show_header_menu)
         hdr.sectionMoved.connect(self._on_section_moved)
         hdr.sectionResized.connect(self._save_header_state)
         hdr.sectionClicked.connect(self._on_header_clicked)
 
-
         layout.addWidget(self._table)
 
-        # Command+Backspace (macOS) / Ctrl+Backspace (other platforms) → move to Trash
+        # Cmd+Backspace / Ctrl+Backspace → move to Trash
         trash_sc = QShortcut(QKeySequence("Ctrl+Backspace"), self._table)
         trash_sc.setContext(Qt.WidgetWithChildrenShortcut)
         trash_sc.activated.connect(self._trash_release)
 
-        btn_row = QHBoxLayout()
+        # ── Bottom bar ────────────────────────────────────────────────────
+        bottom_bar = QWidget()
+        bb = QHBoxLayout(bottom_bar)
+        bb.setContentsMargins(8, 4, 8, 4)
+        bb.setSpacing(4)
 
         edit_btn = QPushButton("Release Info")
         edit_btn.setToolTip("View/edit release info (double-click)")
         edit_btn.clicked.connect(self._edit_release)
-        btn_row.addWidget(edit_btn)
+        bb.addWidget(edit_btn)
 
         open_btn = QPushButton("Open Folder")
         open_btn.clicked.connect(self._open_release)
-        btn_row.addWidget(open_btn)
+        bb.addWidget(open_btn)
 
-        drag_hint = QLabel("Click ▶ to play a release, or drag it to your audio player")
+        bb.addStretch()
+
+        self._count_label = QLabel("")
+        self._count_label.setStyleSheet("font-size: 11px;")
+        bb.addWidget(self._count_label)
+
+        bb.addStretch()
+
+        drag_hint = QLabel("▶ to play · drag to player")
         drag_hint.setStyleSheet("color: palette(placeholderText); font-size: 11px;")
-        btn_row.addWidget(drag_hint)
-
-        btn_row.addStretch()
+        bb.addWidget(drag_hint)
 
         reset_btn = QPushButton("Reset View")
         reset_btn.setToolTip("Restore default column order and widths")
         reset_btn.clicked.connect(self._reset_header)
-        btn_row.addWidget(reset_btn)
+        bb.addWidget(reset_btn)
 
-        layout.addLayout(btn_row)
+        layout.addWidget(bottom_bar)
 
     # ── Header click ──────────────────────────────────────────────────────
 

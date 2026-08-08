@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 
 from src.database.db import Database
 from src.scanner.mask import DEFAULT_MASK, validate_mask, mask_to_regex, parse_with_mask
+from src.ui.style import GROUPBOX_STYLE, SEARCH_STYLE
 from src.ui.theme import apply_theme
 from src.utils.logger import QtLogHandler, get_logger  # noqa: F401 (QtLogHandler used in type hints)
 
@@ -50,11 +51,12 @@ class SettingsTab(QWidget):
         outer.addWidget(scroll)
 
         inner = QWidget()
+        inner.setStyleSheet(GROUPBOX_STYLE)
         scroll.setWidget(inner)
 
         layout = QVBoxLayout(inner)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
+        layout.setContentsMargins(20, 16, 20, 20)
+        layout.setSpacing(4)
 
         # ── Folder name mask ──────────────────────────────────────────────
         mask_box = QGroupBox("Folder Name Mask")
@@ -71,6 +73,7 @@ class SettingsTab(QWidget):
         input_row = QHBoxLayout()
         self._mask_edit = QLineEdit()
         self._mask_edit.setPlaceholderText(DEFAULT_MASK)
+        self._mask_edit.setStyleSheet(SEARCH_STYLE)
         self._mask_reset_btn = QPushButton("Reset")
         self._mask_reset_btn.setFixedWidth(55)
         input_row.addWidget(self._mask_edit)
@@ -85,6 +88,7 @@ class SettingsTab(QWidget):
         preview_lbl.setFixedWidth(55)
         self._mask_preview_input = QLineEdit()
         self._mask_preview_input.setPlaceholderText("Type a folder name to test the mask…")
+        self._mask_preview_input.setStyleSheet(SEARCH_STYLE)
         preview_row.addWidget(preview_lbl)
         preview_row.addWidget(self._mask_preview_input)
         mask_layout.addLayout(preview_row)
@@ -158,6 +162,7 @@ class SettingsTab(QWidget):
         player_row = QHBoxLayout()
         self._player_edit = QLineEdit()
         self._player_edit.setPlaceholderText("e.g. /Applications/VLC.app/Contents/MacOS/VLC")
+        self._player_edit.setStyleSheet(SEARCH_STYLE)
         self._player_edit.returnPressed.connect(self._save_player)
         self._player_browse_btn = QPushButton("Browse…")
         self._player_browse_btn.setFixedWidth(75)

@@ -11,7 +11,7 @@ from PySide6.QtGui import QColor, QDrag, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel,
     QPushButton, QTableView, QHeaderView, QAbstractItemView, QMenu,
-    QApplication, QStyledItemDelegate, QStyle, QMessageBox,
+    QApplication, QStyledItemDelegate, QStyleOptionViewItem, QStyle, QMessageBox,
     QSplitter, QStackedWidget,
 )
 
@@ -55,7 +55,7 @@ _TAIL_WIDTHS  = [40, 130, 70, 300]
 
 _TIEBREAKER_TOKENS = ["artist", "year_recorded", "title"]
 
-SETTINGS_KEY = "releases_header_state"
+SETTINGS_KEY = "releases_header_state_v2"
 
 _PLAY_WIDTH          = 38
 _EXTRA_DEFAULT_WIDTH = 90
@@ -309,33 +309,71 @@ class ReleasesModel(QAbstractTableModel):
 
 
 class _PlayButtonDelegate(QStyledItemDelegate):
-    def __init__(self, db, toggle_expand_cb=None, parent=None):
+    def __init__(self, db, toggle_expand_cb=None, proxy=None, artist_col_fn=None, parent=None):
         super().__init__(parent)
         self._db = db
         self._toggle_expand_cb = toggle_expand_cb
+        self._proxy = proxy
+        self._artist_col_fn = artist_col_fn
+
+    def _proxy_artist(self, proxy_row: int) -> str:
+        if self._proxy is None or self._artist_col_fn is None:
+            return ""
+        try:
+            col = self._artist_col_fn()
+        except (ValueError, IndexError):
+            return ""
+        idx = self._proxy.index(proxy_row, col)
+        return (idx.data(Qt.DisplayRole) or "").strip()
+
+    def _is_group_start(self, proxy_row: int) -> bool:
+        """True when this row begins a new artist group (different artist than the row above)."""
+        if self._proxy is None or self._artist_col_fn is None:
+            return False
+        if proxy_row == 0:
+            return True
+        return self._proxy_artist(proxy_row) != self._proxy_artist(proxy_row - 1)
 
     def paint(self, painter, option, index):
-        if index.column() != COL_PLAY:
+        proxy_row = index.row()
+        is_start = self._is_group_start(proxy_row)
+
+        if index.column() == COL_PLAY:
+            # Paint the standard cell background (alternating rows, selection).
             super().paint(painter, option, index)
+
+            row = index.data(Qt.UserRole)
+            if row:
+                if row.get("is_multi_disc"):
+                    icon = "▾" if row.get("_is_expanded") else "▸"
+                elif row["is_available"]:
+                    icon = "▶"
+                else:
+                    icon = None
+
+                if icon is not None:
+                    painter.save()
+                    if option.state & QStyle.State_MouseOver:
+                        painter.fillRect(option.rect, option.palette.highlight().color().lighter(175))
+                    painter.setPen(option.palette.text().color())
+                    painter.drawText(option.rect, Qt.AlignCenter, icon)
+                    painter.restore()
+
             return
 
-        row = index.data(Qt.UserRole)
-        if not row:
-            return
+        try:
+            artist_col = self._artist_col_fn() if self._artist_col_fn else -1
+        except (ValueError, IndexError):
+            artist_col = -1
 
-        if row.get("is_multi_disc"):
-            icon = "▾" if row.get("_is_expanded") else "▸"
-        elif row["is_available"]:
-            icon = "▶"
+        if artist_col >= 0 and index.column() == artist_col and not is_start:
+            # Same artist as the row above — draw the cell without text.
+            opt = QStyleOptionViewItem(option)
+            self.initStyleOption(opt, index)
+            opt.text = ""
+            QApplication.style().drawControl(QStyle.CE_ItemViewItem, opt, painter)
         else:
-            return
-
-        painter.save()
-        if option.state & QStyle.State_MouseOver:
-            painter.fillRect(option.rect, option.palette.highlight().color().lighter(175))
-        painter.setPen(option.palette.text().color())
-        painter.drawText(option.rect, Qt.AlignCenter, icon)
-        painter.restore()
+            super().paint(painter, option, index)
 
     def sizeHint(self, option, index):
         if index.column() == COL_PLAY:
@@ -481,6 +519,17 @@ class _DragTableView(QTableView):
         super().mouseReleaseEvent(event)
 
 
+class _SeparatorHeader(QHeaderView):
+    """Horizontal header that draws a 1-px right-side separator after a specified column."""
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Horizontal, parent)
+        self._sep_col: int = -1
+
+    def set_separator_column(self, logical: int):
+        self._sep_col = logical
+
+
 def _make_stub(title: str) -> QWidget:
     w = QWidget()
     lay = QVBoxLayout(w)
@@ -521,7 +570,7 @@ class _RecentlyAddedPage(QWidget):
         self._table.setSortingEnabled(False)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._table.setAlternatingRowColors(True)
+        self._table.setAlternatingRowColors(False)
         self._table.setShowGrid(False)
         self._table.setStyleSheet(TABLE_STYLE)
         vhdr = self._table.verticalHeader()
@@ -533,10 +582,18 @@ class _RecentlyAddedPage(QWidget):
         self._table.setDefaultDropAction(Qt.DropAction.CopyAction)
         self._table.setMouseTracking(True)
 
-        self._delegate = _PlayButtonDelegate(self._db, parent=self._table)
+        self._delegate = _PlayButtonDelegate(
+            self._db,
+            proxy=self._proxy,
+            artist_col_fn=lambda: self._model.col_for_token("artist"),
+            parent=self._table,
+        )
         self._table.setItemDelegate(self._delegate)
 
-        hdr = self._table.horizontalHeader()
+        self._sep_header = _SeparatorHeader(self._table)
+        self._table.setHorizontalHeader(self._sep_header)
+
+        hdr = self._sep_header
         hdr.setSectionsMovable(False)
         hdr.setSectionsClickable(False)
         hdr.setStretchLastSection(False)
@@ -562,7 +619,19 @@ class _RecentlyAddedPage(QWidget):
         flat = [dict(r) for r in rows]
         self._model.load(flat, token_order, extra_tokens)
 
-        hdr = self._table.horizontalHeader()
+        hdr = self._sep_header
+        # Set canonical visual order: Artist at visual 0, PLAY at visual 1.
+        try:
+            artist_col = self._model.col_for_token("artist")
+            n = self._model.columnCount()
+            for logical in range(n):
+                vis = hdr.visualIndex(logical)
+                if vis != logical:
+                    hdr.moveSection(vis, logical)
+            hdr.moveSection(hdr.visualIndex(artist_col), 0)
+            self._sep_header.set_separator_column(artist_col)
+        except (ValueError, IndexError):
+            pass
         hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
         hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
         for i, tok in enumerate(token_order):
@@ -665,7 +734,7 @@ class ReleasesTab(QWidget):
         self._table.setSortingEnabled(True)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._table.setAlternatingRowColors(True)
+        self._table.setAlternatingRowColors(False)
         self._table.setShowGrid(False)
         self._table.setStyleSheet(TABLE_STYLE)
         self._table.doubleClicked.connect(self._on_double_click)
@@ -681,11 +750,18 @@ class ReleasesTab(QWidget):
         self._table.customContextMenuRequested.connect(self._show_context_menu)
 
         self._delegate = _PlayButtonDelegate(
-            self._db, toggle_expand_cb=self._toggle_expand, parent=self._table
+            self._db,
+            toggle_expand_cb=self._toggle_expand,
+            proxy=self._proxy,
+            artist_col_fn=lambda: self._model.col_for_token("artist"),
+            parent=self._table,
         )
         self._table.setItemDelegate(self._delegate)
 
-        hdr = self._table.horizontalHeader()
+        self._sep_header = _SeparatorHeader(self._table)
+        self._table.setHorizontalHeader(self._sep_header)
+
+        hdr = self._sep_header
         hdr.setSectionsMovable(True)
         hdr.setSectionsClickable(True)
         hdr.setStretchLastSection(False)
@@ -863,11 +939,22 @@ class ReleasesTab(QWidget):
             self._clamping_section = False
 
     def _on_section_moved(self, logical, old_visual, new_visual):
-        if logical == COL_PLAY and new_visual != 0:
-            self._table.horizontalHeader().moveSection(new_visual, 0)
+        hdr = self._sep_header
+        try:
+            artist_col = self._model.col_for_token("artist")
+        except (ValueError, IndexError):
+            artist_col = -1
+
+        fixed = {COL_PLAY, artist_col} if artist_col >= 0 else {COL_PLAY}
+
+        if logical == COL_PLAY and new_visual != 1:
+            hdr.moveSection(new_visual, 1)
             return
-        if new_visual == 0 and logical != COL_PLAY:
-            self._table.horizontalHeader().moveSection(0, old_visual)
+        if artist_col >= 0 and logical == artist_col and new_visual != 0:
+            hdr.moveSection(new_visual, 0)
+            return
+        if new_visual in (0, 1) and logical not in fixed:
+            hdr.moveSection(new_visual, old_visual)
             return
         self._save_header_state()
 
@@ -888,13 +975,23 @@ class ReleasesTab(QWidget):
             except Exception:
                 return
         try:
-            self._table.horizontalHeader().restoreState(self._header_state)
+            self._sep_header.restoreState(self._header_state)
         except Exception:
             pass
-        hdr = self._table.horizontalHeader()
+        hdr = self._sep_header
         # restoreState re-applies saved resize mode and width; always override.
         hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
         hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
+        # Ensure canonical visual order (safety net for migrated/stale states).
+        try:
+            artist_col = self._model.col_for_token("artist")
+            if hdr.visualIndex(artist_col) != 0 or hdr.visualIndex(COL_PLAY) != 1:
+                self._apply_canonical_visual_order()
+                self._save_header_state()
+            else:
+                self._sep_header.set_separator_column(artist_col)
+        except (ValueError, IndexError):
+            pass
         # If saved state had sort indicator on COL_PLAY, move it to Artist.
         if hdr.sortIndicatorSection() == COL_PLAY:
             hdr.setSortIndicator(COL_PLAY + 1, Qt.AscendingOrder)
@@ -905,13 +1002,9 @@ class ReleasesTab(QWidget):
         self._db.set_setting(SETTINGS_KEY, "")
 
     def _reset_header(self):
-        hdr = self._table.horizontalHeader()
-        n = self._model.columnCount()
-        for logical in range(n):
-            visual = hdr.visualIndex(logical)
-            if visual != logical:
-                hdr.moveSection(visual, logical)
         self._apply_default_widths()
+        hdr = self._sep_header
+        n = self._model.columnCount()
         for i in range(n):
             hdr.setSectionHidden(i, False)
         self._save_header_state()
@@ -959,8 +1052,29 @@ class ReleasesTab(QWidget):
         hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
         self._count_label.setText(f"Releases: {len(top_rows)}")
 
+    def _apply_canonical_visual_order(self):
+        """Set Artist at visual 0, PLAY at visual 1 without triggering section-moved constraints."""
+        hdr = self._sep_header
+        try:
+            artist_col = self._model.col_for_token("artist")
+        except (ValueError, IndexError):
+            return
+        hdr.sectionMoved.disconnect(self._on_section_moved)
+        try:
+            n = self._model.columnCount()
+            for logical in range(n):
+                vis = hdr.visualIndex(logical)
+                if vis != logical:
+                    hdr.moveSection(vis, logical)
+            # Artist to visual 0 → PLAY shifts to visual 1 automatically.
+            hdr.moveSection(hdr.visualIndex(artist_col), 0)
+        finally:
+            hdr.sectionMoved.connect(self._on_section_moved)
+        self._sep_header.set_separator_column(artist_col)
+
     def _apply_default_widths(self):
-        hdr = self._table.horizontalHeader()
+        hdr = self._sep_header
+        self._apply_canonical_visual_order()
         hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
         hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
         for i, tok in enumerate(self._model._token_order):

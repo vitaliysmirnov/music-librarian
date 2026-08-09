@@ -6,13 +6,14 @@ TABLE_STYLE = """
 QTableView, QTableWidget {
     border: none;
     font-size: 12px;
+    background: palette(alternateBase);
     selection-background-color: #3875d7;
     selection-color: white;
     show-decoration-selected: 1;
 }
 QTableView::item, QTableWidget::item {
     padding: 0 4px;
-    border-bottom: 1px solid palette(mid);
+    background: palette(alternateBase);
 }
 QTableView::item:selected, QTableWidget::item:selected {
     background: #3875d7;

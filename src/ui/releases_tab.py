@@ -6,16 +6,18 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QSortFilterProxyModel, QUrl, QMimeData, QPoint, QSize, Signal
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QIdentityProxyModel, QSortFilterProxyModel, QUrl, QMimeData, QPoint, QSize, Signal
 from PySide6.QtGui import QColor, QDrag, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel,
     QPushButton, QTableView, QHeaderView, QAbstractItemView, QMenu,
     QApplication, QStyledItemDelegate, QStyle, QMessageBox,
+    QSplitter, QStackedWidget,
 )
 
 from src.scanner.mask import DEFAULT_MASK, KNOWN_TOKENS, get_custom_tokens
 from src.ui.edit_release_dialog import EditReleaseDialog
+from src.ui.sidebar_panel import SidebarPanel
 from src.ui.style import ROW_HEIGHT, TABLE_STYLE, SEARCH_STYLE
 
 # Column 0 is always the play button.
@@ -61,6 +63,14 @@ _EXTRA_DEFAULT_WIDTH = 90
 _AUDIO_EXTENSIONS = {
     ".flac", ".mp3", ".wav", ".aiff", ".aif", ".m4a", ".alac",
     ".ogg", ".opus", ".ape", ".wv", ".wma", ".aac", ".dsf", ".dff",
+}
+
+_NAV_PAGE = {
+    "home":      0,
+    "recent":    1,
+    "releases":  2,
+    "liked":     3,
+    "playlists": 4,
 }
 
 
@@ -471,6 +481,103 @@ class _DragTableView(QTableView):
         super().mouseReleaseEvent(event)
 
 
+def _make_stub(title: str) -> QWidget:
+    w = QWidget()
+    lay = QVBoxLayout(w)
+    lbl = QLabel(title)
+    lbl.setAlignment(Qt.AlignCenter)
+    lbl.setStyleSheet("font-size: 24px; font-weight: 600; color: palette(placeholderText);")
+    lay.addWidget(lbl)
+    sub = QLabel("Coming soon")
+    sub.setAlignment(Qt.AlignCenter)
+    sub.setStyleSheet("font-size: 13px; color: palette(placeholderText);")
+    lay.addWidget(sub)
+    return w
+
+
+class _RecentlyAddedPage(QWidget):
+    def __init__(self, db, parent=None):
+        super().__init__(parent)
+        self._db = db
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        header = QLabel("Recently Added")
+        header.setStyleSheet(
+            "font-size: 18px; font-weight: 600; padding: 10px 14px 6px 14px;"
+        )
+        layout.addWidget(header)
+
+        self._model = ReleasesModel()
+        self._proxy = QIdentityProxyModel()
+        self._proxy.setSourceModel(self._model)
+
+        self._table = _DragTableView()
+        self._table.setModel(self._proxy)
+        self._table.setSortingEnabled(False)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._table.setAlternatingRowColors(True)
+        self._table.setShowGrid(False)
+        self._table.setStyleSheet(TABLE_STYLE)
+        vhdr = self._table.verticalHeader()
+        vhdr.setVisible(False)
+        vhdr.setDefaultSectionSize(ROW_HEIGHT)
+        vhdr.setMinimumSectionSize(ROW_HEIGHT)
+        self._table.setDragEnabled(True)
+        self._table.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self._table.setDefaultDropAction(Qt.DropAction.CopyAction)
+        self._table.setMouseTracking(True)
+
+        self._delegate = _PlayButtonDelegate(self._db, parent=self._table)
+        self._table.setItemDelegate(self._delegate)
+
+        hdr = self._table.horizontalHeader()
+        hdr.setSectionsMovable(False)
+        hdr.setSectionsClickable(False)
+        hdr.setStretchLastSection(False)
+        hdr.setSectionResizeMode(QHeaderView.Interactive)
+        hdr.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        layout.addWidget(self._table)
+
+        self._count_label = QLabel("")
+        self._count_label.setStyleSheet(
+            "font-size: 11px; color: palette(placeholderText); padding: 4px 12px;"
+        )
+        layout.addWidget(self._count_label)
+
+    def refresh(self, token_order: list | None = None, extra_tokens: list | None = None):
+        if token_order is None:
+            mask = self._db.get_setting("folder_mask", DEFAULT_MASK)
+            token_order = _known_token_order(mask)
+            extra_tokens = get_custom_tokens(mask)
+        extra_tokens = extra_tokens or []
+
+        rows = self._db.get_recent_releases(50)
+        flat = [dict(r) for r in rows]
+        self._model.load(flat, token_order, extra_tokens)
+
+        hdr = self._table.horizontalHeader()
+        hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
+        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
+        for i, tok in enumerate(token_order):
+            hdr.resizeSection(1 + i, _TOKEN_WIDTH.get(tok, 100))
+        n_kn = len(token_order)
+        for i in range(len(extra_tokens)):
+            hdr.resizeSection(1 + n_kn + i, _EXTRA_DEFAULT_WIDTH)
+        for i, w in enumerate(_TAIL_WIDTHS):
+            hdr.resizeSection(1 + n_kn + len(extra_tokens) + i, w)
+
+        self._count_label.setText(
+            f"Showing {len(rows)} most recently added release{'s' if len(rows) != 1 else ''}"
+        )
+
+
 class ReleasesTab(QWidget):
     release_trashed = Signal()
 
@@ -479,30 +586,74 @@ class ReleasesTab(QWidget):
         self._db = db
         self._expanded: set[str] = set()
         self._header_state: QByteArray | None = None  # in-memory cache
+        self._clamping_section = False
         self._setup_ui()
         self._restore_header_state()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        # ── Top toolbar ───────────────────────────────────────────────────
-        top_bar = QWidget()
-        tb = QHBoxLayout(top_bar)
-        tb.setContentsMargins(8, 5, 8, 5)
-        tb.setSpacing(6)
-        tb.addStretch()
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(1)
+        splitter.setStyleSheet("QSplitter::handle { background: palette(mid); }")
+        outer.addWidget(splitter)
 
+        # ── Left column: search bar + sidebar nav ─────────────────────────
+        left_col = QWidget()
+        left_col.setObjectName("LeftCol")
+        left_col.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        left_col.setStyleSheet("#LeftCol { background: palette(window); }")
+        left_col.setMinimumWidth(140)
+        left_col.setMaximumWidth(260)
+        lc_layout = QVBoxLayout(left_col)
+        lc_layout.setContentsMargins(0, 0, 0, 0)
+        lc_layout.setSpacing(0)
+
+        search_wrap = QWidget()
+        sw = QHBoxLayout(search_wrap)
+        sw.setContentsMargins(8, 8, 8, 4)
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search…")
-        self._search.setFixedWidth(220)
         self._search.setClearButtonEnabled(True)
         self._search.setStyleSheet(SEARCH_STYLE)
-        self._search.textChanged.connect(self.refresh)
-        tb.addWidget(self._search)
+        self._search.textChanged.connect(self._on_search_changed)
+        sw.addWidget(self._search)
+        lc_layout.addWidget(search_wrap)
 
-        layout.addWidget(top_bar)
+        self._sidebar = SidebarPanel()
+        lc_layout.addWidget(self._sidebar, 1)
+
+        splitter.addWidget(left_col)
+        splitter.setCollapsible(0, False)
+
+        # ── Right content stack ───────────────────────────────────────────
+        self._stack = QStackedWidget()
+        splitter.addWidget(self._stack)
+        splitter.setCollapsible(1, False)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([170, 900])
+
+        self._stack.addWidget(_make_stub("Home"))                  # 0
+
+        self._recent_page = _RecentlyAddedPage(self._db)
+        self._stack.addWidget(self._recent_page)                   # 1
+
+        self._stack.addWidget(self._create_albums_widget())        # 2  releases
+        self._stack.addWidget(_make_stub("Liked"))                 # 3
+        self._stack.addWidget(_make_stub("All Playlists"))         # 4
+
+        self._sidebar.nav_changed.connect(self._on_nav)
+        self._sidebar.set_current("releases")
+        self._stack.setCurrentIndex(_NAV_PAGE["releases"])
+
+    def _create_albums_widget(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         # ── Table ─────────────────────────────────────────────────────────
         self._model = ReleasesModel()
@@ -544,6 +695,7 @@ class ReleasesTab(QWidget):
         hdr.setContextMenuPolicy(Qt.CustomContextMenu)
         hdr.customContextMenuRequested.connect(self._show_header_menu)
         hdr.sectionMoved.connect(self._on_section_moved)
+        hdr.sectionResized.connect(self._enforce_min_section_width)
         hdr.sectionResized.connect(self._save_header_state)
         hdr.sectionClicked.connect(self._on_header_clicked)
 
@@ -587,6 +739,19 @@ class ReleasesTab(QWidget):
         bb.addWidget(reset_btn)
 
         layout.addWidget(bottom_bar)
+
+        return widget
+
+    # ── Sidebar navigation ────────────────────────────────────────────────
+
+    def _on_nav(self, key: str):
+        self._stack.setCurrentIndex(_NAV_PAGE.get(key, _NAV_PAGE["releases"]))
+
+    def _on_search_changed(self, text: str):
+        if text.strip():
+            self._sidebar.set_current("releases")
+            self._stack.setCurrentIndex(_NAV_PAGE["releases"])
+        self.refresh()
 
     # ── Header click ──────────────────────────────────────────────────────
 
@@ -678,6 +843,25 @@ class ReleasesTab(QWidget):
 
     # ── Header state ───────────────────────────────────────────────────────
 
+    def _header_min_width(self, logical: int) -> int:
+        if logical == COL_PLAY:
+            return _PLAY_WIDTH
+        text = str(self._model.headerData(logical, Qt.Horizontal, Qt.DisplayRole) or "")
+        if not text:
+            return 20
+        fm = self._table.horizontalHeader().fontMetrics()
+        # text width + padding (6px each side) + sort-indicator allowance (14px)
+        return fm.horizontalAdvance(text) + 26
+
+    def _enforce_min_section_width(self, logical: int, _old: int, new_size: int):
+        if self._clamping_section:
+            return
+        min_w = self._header_min_width(logical)
+        if new_size < min_w:
+            self._clamping_section = True
+            self._table.horizontalHeader().resizeSection(logical, min_w)
+            self._clamping_section = False
+
     def _on_section_moved(self, logical, old_visual, new_visual):
         if logical == COL_PLAY and new_visual != 0:
             self._table.horizontalHeader().moveSection(new_visual, 0)
@@ -745,6 +929,7 @@ class ReleasesTab(QWidget):
         mask = self._db.get_setting("folder_mask", DEFAULT_MASK)
         token_order  = _known_token_order(mask)
         extra_tokens = get_custom_tokens(mask)
+        self._recent_page.refresh(token_order, extra_tokens)
         top_rows = self._db.get_releases(search=self._search.text().strip())
 
         flat: list[dict] = []

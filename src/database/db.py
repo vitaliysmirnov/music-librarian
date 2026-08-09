@@ -95,6 +95,9 @@ class Database:
                 c.execute("ALTER TABLE releases ADD COLUMN is_multi_disc INTEGER NOT NULL DEFAULT 0")
             if "parent_path" not in cols:
                 c.execute("ALTER TABLE releases ADD COLUMN parent_path TEXT")
+            if "date_added" not in cols:
+                c.execute("ALTER TABLE releases ADD COLUMN date_added TEXT")
+                c.execute("UPDATE releases SET date_added = modified_at WHERE date_added IS NULL")
 
             # Normalise all stored paths to NFC — older entries may be NFD (macOS
             # filesystem) while the scanner now writes NFC, causing duplicates.
@@ -271,8 +274,8 @@ class Database:
                     (source_id, artist, year_recorded, title, catalog_number,
                      media, year_released, folder_path, last_seen_path,
                      is_available, modified_at, extras,
-                     disc_number, is_multi_disc, parent_path)
-                VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)
+                     disc_number, is_multi_disc, parent_path, date_added)
+                VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?)
                 ON CONFLICT(folder_path) DO UPDATE SET
                     artist=excluded.artist,
                     year_recorded=excluded.year_recorded,
@@ -292,7 +295,7 @@ class Database:
                     source_id, artist, year_recorded, title,
                     catalog_number, media, year_released,
                     folder_path, folder_path, now, extras_json,
-                    disc_number, int(is_multi_disc), parent_path,
+                    disc_number, int(is_multi_disc), parent_path, now,
                 ),
             )
 
@@ -371,6 +374,17 @@ class Database:
         query += " ORDER BY a.artist, a.year_recorded, a.title"
         with self.conn() as c:
             return c.execute(query, params).fetchall()
+
+    def get_recent_releases(self, limit: int = 50) -> list[sqlite3.Row]:
+        with self.conn() as c:
+            return c.execute(
+                """SELECT a.*, s.path AS source_path, s.is_available AS source_available
+                   FROM releases a JOIN sources s ON a.source_id = s.id
+                   WHERE a.parent_path IS NULL
+                   ORDER BY COALESCE(a.date_added, a.modified_at) DESC, a.id DESC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
 
     def get_release_by_path(self, folder_path: str) -> sqlite3.Row | None:
         with self.conn() as c:

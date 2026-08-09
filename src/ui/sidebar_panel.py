@@ -1,6 +1,6 @@
 from PySide6.QtCore import Qt, QPointF, QRectF, QSize, Signal
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QGraphicsOpacityEffect, QLabel, QPushButton, QVBoxLayout, QWidget
 
 _ICON_PX = 14   # logical icon size (points)
 
@@ -181,6 +181,9 @@ class SidebarPanel(QWidget):
             if kind == "section":
                 sec = QLabel(label.upper())
                 sec.setStyleSheet(_SECTION_STYLE)
+                _fade = QGraphicsOpacityEffect(sec)
+                _fade.setOpacity(0.45)
+                sec.setGraphicsEffect(_fade)
                 layout.addWidget(sec)
             else:
                 btn = QPushButton(label)

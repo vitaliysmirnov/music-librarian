@@ -646,8 +646,8 @@ class ReleasesTab(QWidget):
         self._stack.addWidget(_make_stub("All Playlists"))         # 4
 
         self._sidebar.nav_changed.connect(self._on_nav)
-        self._sidebar.set_current("releases")
-        self._stack.setCurrentIndex(_NAV_PAGE["releases"])
+        self._sidebar.set_current("home")
+        self._stack.setCurrentIndex(_NAV_PAGE["home"])
 
     def _create_albums_widget(self) -> QWidget:
         widget = QWidget()

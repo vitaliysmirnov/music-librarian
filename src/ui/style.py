@@ -37,6 +37,11 @@ QHeaderView::section {
     font-size: 11px;
     font-weight: 500;
 }
+QHeaderView::up-arrow, QHeaderView::down-arrow {
+    width: 0px;
+    height: 0px;
+    image: none;
+}
 """
 
 SEARCH_STYLE = """

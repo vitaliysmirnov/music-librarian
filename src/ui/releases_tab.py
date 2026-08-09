@@ -764,6 +764,7 @@ class ReleasesTab(QWidget):
         hdr = self._sep_header
         hdr.setSectionsMovable(True)
         hdr.setSectionsClickable(True)
+        hdr.setSortIndicatorShown(False)
         hdr.setStretchLastSection(False)
         hdr.setSectionResizeMode(QHeaderView.Interactive)
         hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
@@ -925,9 +926,8 @@ class ReleasesTab(QWidget):
         text = str(self._model.headerData(logical, Qt.Horizontal, Qt.DisplayRole) or "")
         if not text:
             return 20
-        fm = self._table.horizontalHeader().fontMetrics()
-        # text width + padding (6px each side) + sort-indicator allowance (14px)
-        return fm.horizontalAdvance(text) + 26
+        fm = self._sep_header.fontMetrics()
+        return fm.horizontalAdvance(text) + 8  # 4px padding each side
 
     def _enforce_min_section_width(self, logical: int, _old: int, new_size: int):
         if self._clamping_section:

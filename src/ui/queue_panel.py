@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from src.ui.player_engine import PlayerEngine, QueueTrack
+from src.ui.player_engine import PlayerEngine, QueueTrack, _AUDIO_EXTENSIONS
 
 _PANEL_STYLE = """
 QueuePanel {
@@ -38,6 +38,21 @@ QueuePanel QListWidget::item {
 }
 QueuePanel QListWidget::item:selected {
     background: transparent;
+}
+"""
+
+_CLEAR_STYLE = """
+QPushButton {
+    border: none;
+    background: transparent;
+    color: palette(placeholderText);
+    font-size: 11px;
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+QPushButton:hover {
+    color: white;
+    background: #cc3333;
 }
 """
 
@@ -96,15 +111,20 @@ class _DropLine(QWidget):
 
 
 class _QueueList(QListWidget):
-    """QListWidget with Spotify-style drop indicator and reliable move semantics."""
+    """QListWidget with Spotify-style drop indicator and reliable move semantics.
+
+    Accepts both internal reorder drags and external URL drops (from Finder
+    or the releases table).  External drops are forwarded to `enqueue_cb`.
+    """
 
     move_requested = Signal(int, int)  # from_idx, to_idx
 
-    def __init__(self, parent=None):
+    def __init__(self, enqueue_cb=None, parent=None):
         super().__init__(parent)
+        self._enqueue_cb = enqueue_cb
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
-        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._insert_row = -1
@@ -179,10 +199,25 @@ class _QueueList(QListWidget):
         drag.setHotSpot(QPoint(0, pix_h // 2))
         drag.exec(supported_actions)
 
+    def dragEnterEvent(self, event):
+        if event.source() is self:
+            event.accept()
+        elif event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
     def dragMoveEvent(self, event):
-        self._insert_row = self._insert_row_at(event.position().toPoint())
-        self._update_drop_line(self._insert_row)
-        event.accept()
+        if event.source() is self:
+            self._insert_row = self._insert_row_at(event.position().toPoint())
+            self._update_drop_line(self._insert_row)
+            event.accept()
+        elif event.mimeData().hasUrls():
+            self._drop_line.clear()
+            self._drop_line.hide()
+            event.acceptProposedAction()
+        else:
+            event.ignore()
 
     def dragLeaveEvent(self, event):
         self._insert_row = -1
@@ -194,21 +229,25 @@ class _QueueList(QListWidget):
         self._drop_line.clear()
         self._drop_line.hide()
 
-        selected = self.selectedItems()
-        if not selected:
+        if event.source() is self:
+            # Internal reorder
+            selected = self.selectedItems()
+            if not selected:
+                event.ignore()
+                return
+            from_row = self.row(selected[0])
+            raw_to   = self._insert_row if self._insert_row >= 0 \
+                else self._insert_row_at(event.position().toPoint())
+            to_row   = raw_to - 1 if raw_to > from_row else raw_to
+            self._insert_row = -1
+            event.accept()
+            if from_row != to_row:
+                self.move_requested.emit(from_row, to_row)
+        elif event.mimeData().hasUrls() and self._enqueue_cb:
+            self._enqueue_cb(event.mimeData().urls())
+            event.acceptProposedAction()
+        else:
             event.ignore()
-            return
-
-        from_row = self.row(selected[0])
-        raw_to   = self._insert_row if self._insert_row >= 0 \
-            else self._insert_row_at(event.position().toPoint())
-        to_row   = raw_to - 1 if raw_to > from_row else raw_to
-
-        self._insert_row = -1
-        event.accept()
-
-        if from_row != to_row:
-            self.move_requested.emit(from_row, to_row)
 
 
 class QueuePanel(QFrame):
@@ -229,11 +268,25 @@ class QueuePanel(QFrame):
         layout.setContentsMargins(0, 0, 0, 8)
         layout.setSpacing(0)
 
+        header = QWidget()
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(0, 0, 14, 0)
+        hl.setSpacing(0)
+
         title = QLabel("Queue")
         title.setObjectName("title_lbl")
-        layout.addWidget(title)
+        title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        hl.addWidget(title)
 
-        self._list = _QueueList()
+        self._clear_btn = QPushButton("Clear")
+        self._clear_btn.setStyleSheet(_CLEAR_STYLE)
+        self._clear_btn.setToolTip("Clear queue")
+        self._clear_btn.clicked.connect(self._engine.clear_queue)
+        hl.addWidget(self._clear_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        layout.addWidget(header)
+
+        self._list = _QueueList(enqueue_cb=self._enqueue_from_urls)
         self._list.setSpacing(0)
         self._list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -309,6 +362,32 @@ class QueuePanel(QFrame):
         return w
 
     # ── Interactions ──────────────────────────────────────────────────────
+
+    def _enqueue_from_urls(self, urls):
+        """Enqueue dropped URLs: folders add their full audio content,
+        individual audio files are added as-is (not the whole folder)."""
+        seen_folders: set[str] = set()
+        seen_tracks:  set[str] = set()
+        tracks: list[str] = []
+
+        for url in urls:
+            local = url.toLocalFile()
+            if not local:
+                continue
+            p = Path(local)
+            if p.is_dir():
+                fp = str(p)
+                if fp not in seen_folders:
+                    seen_folders.add(fp)
+                    self._engine.enqueue_release({"folder_path": fp})
+            elif p.is_file() and p.suffix.lower() in _AUDIO_EXTENSIONS:
+                tp = str(p)
+                if tp not in seen_tracks:
+                    seen_tracks.add(tp)
+                    tracks.append(tp)
+
+        if tracks:
+            self._engine.enqueue_tracks(tracks)
 
     def _on_double_click(self, item: QListWidgetItem):
         idx = self._list.row(item)

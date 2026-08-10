@@ -108,6 +108,27 @@ class PlayerEngine(QObject):
         if self._track_idx < 0 and self._queue:
             self._play_at(0)
 
+    def enqueue_tracks(self, paths: list[str]):
+        """Append specific audio files to the queue; start playback if idle."""
+        added = False
+        for p in paths:
+            artist, title, duration_ms = _read_track_tags(p)
+            row = {"folder_path": str(Path(p).parent)}
+            self._queue.append(QueueTrack(row=row, path=p, artist=artist, title=title, duration_ms=duration_ms))
+            added = True
+        if added:
+            self.queue_changed.emit()
+            if self._track_idx < 0:
+                self._play_at(0)
+
+    def clear_queue(self):
+        """Stop playback and empty the queue."""
+        self._player.stop()
+        self._queue.clear()
+        self._track_idx = -1
+        self.queue_changed.emit()
+        self.state_changed.emit(False)
+
     def play_track_at(self, idx: int):
         self._play_at(idx)
 

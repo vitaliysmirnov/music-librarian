@@ -359,26 +359,47 @@ class PlayerBar(QWidget):
         # Strip punctuation so "ABC-001" → "ABC 001"; search matches word-by-word
         return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", catno)).strip()
 
+    _MAX_ARTIST = 30
+    _MAX_TITLE  = 45
+    _MAX_ALBUM  = 45
+    _MAX_CATNO  = 28
+
+    @staticmethod
+    def _elide(text: str, max_chars: int) -> str:
+        return text if len(text) <= max_chars else text[:max_chars - 1] + "…"
+
     def _rebuild_track_label(self):
         if not self._current_artist and not self._current_title:
             self._track_lbl.setText("—")
             self._track_lbl.set_has_links(False)
+            self._track_lbl.setToolTip("")
             return
         c  = self._track_lbl.palette().color(QPalette.ColorRole.WindowText).name()
         parts: list[str] = []
         if self._current_artist:
-            parts.append(self._make_link(self._current_artist, "artist", self._current_artist, c))
+            parts.append(self._make_link(
+                self._elide(self._current_artist, self._MAX_ARTIST),
+                "artist", self._current_artist, c,
+            ))
         if self._current_artist and self._current_title:
             parts.append(f'<span style="color:{c};">  —  </span>')
         if self._current_title:
-            parts.append(self._make_link(self._current_title, "release", self._track_search(), c))
+            parts.append(self._make_link(
+                self._elide(self._current_title, self._MAX_TITLE),
+                "release", self._track_search(), c,
+            ))
         self._track_lbl.setText("".join(parts))
         self._track_lbl.set_has_links(True)
+        truncated = (len(self._current_artist) > self._MAX_ARTIST or
+                     len(self._current_title)  > self._MAX_TITLE)
+        tip = " — ".join(p for p in [self._current_artist, self._current_title] if p)
+        self._track_lbl.setToolTip(tip if truncated else "")
 
     def _rebuild_meta_label(self):
         if not self._current_row:
             self._meta_lbl.setText("")
             self._meta_lbl.set_has_links(False)
+            self._meta_lbl.setToolTip("")
             return
         c      = self._meta_lbl.palette().color(QPalette.ColorRole.PlaceholderText).name()
         as_    = self._album_search()
@@ -386,13 +407,23 @@ class PlayerBar(QWidget):
         cat_no = (self._current_row.get("catalog_number") or "").strip()
         parts: list[str] = []
         if album:
-            parts.append(self._make_link(album, "release", as_, c))
+            parts.append(self._make_link(
+                self._elide(album, self._MAX_ALBUM),
+                "release", as_, c,
+            ))
         if album and cat_no:
             parts.append(f'<span style="color:{c};">  —  </span>')
         if cat_no:
-            parts.append(self._make_link(cat_no, "release", self._catno_search(), c))
+            parts.append(self._make_link(
+                self._elide(cat_no, self._MAX_CATNO),
+                "release", self._catno_search(), c,
+            ))
         self._meta_lbl.setText("".join(parts))
         self._meta_lbl.set_has_links(bool(parts))
+        truncated = (len(album)  > self._MAX_ALBUM or
+                     len(cat_no) > self._MAX_CATNO)
+        tip = " — ".join(p for p in [album, cat_no] if p)
+        self._meta_lbl.setToolTip(tip if truncated else "")
 
     def _on_link(self, href: str):
         if "://" in href:

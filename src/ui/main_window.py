@@ -131,6 +131,7 @@ class MainWindow(QMainWindow):
         self._releases_tab.release_trashed.connect(self._update_info_label)
         self._releases_tab.play_requested.connect(self._player_engine.play_release)
         self._releases_tab.enqueue_requested.connect(self._player_engine.enqueue_release)
+        self._player_bar.navigate_requested.connect(self._on_navigate_requested)
 
         sb = QStatusBar()
         self.setStatusBar(sb)
@@ -146,6 +147,10 @@ class MainWindow(QMainWindow):
         sb.addPermanentWidget(scan_btn)
 
         self._refresh_all()
+
+    def _on_navigate_requested(self, kind: str, value: str):
+        self._tabs.setCurrentWidget(self._releases_tab)
+        self._releases_tab.navigate_to(kind, value)
 
     def _toggle_queue(self):
         panel = self._queue_panel

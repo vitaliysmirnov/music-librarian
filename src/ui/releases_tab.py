@@ -834,6 +834,11 @@ class ReleasesTab(QWidget):
 
     # ── Sidebar navigation ────────────────────────────────────────────────
 
+    def navigate_to(self, kind: str, value: str):
+        self._sidebar.set_current("releases")
+        self._stack.setCurrentIndex(_NAV_PAGE["releases"])
+        self._search.setText(value)
+
     def _on_nav(self, key: str):
         self._stack.setCurrentIndex(_NAV_PAGE.get(key, _NAV_PAGE["releases"]))
 

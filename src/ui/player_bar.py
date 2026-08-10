@@ -1,11 +1,30 @@
+import html
+import urllib.parse
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QEvent, QPointF, Signal
+from PySide6.QtGui import QCursor, QMouseEvent, QPalette
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
+    QApplication, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
 )
 
 from src.ui.player_engine import PlayerEngine
+
+
+class _LinkLabel(QLabel):
+    """QLabel that re-fires MouseMove on Enter so Qt detects links immediately."""
+    def enterEvent(self, event: QEvent) -> None:
+        super().enterEvent(event)
+        pos = QPointF(self.mapFromGlobal(QCursor.pos()))
+        QApplication.sendEvent(
+            self,
+            QMouseEvent(
+                QEvent.Type.MouseMove, pos,
+                Qt.MouseButton.NoButton, Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.NoModifier,
+            ),
+        )
+
 
 _SIDE_W    = 110   # fixed width of transport block and right block
 _GROUP_MAX = 780   # controls group never grows wider than this
@@ -132,13 +151,17 @@ def _fmt_ms(ms: int) -> str:
 
 
 class PlayerBar(QWidget):
-    queue_toggled = Signal()
+    queue_toggled      = Signal()
+    navigate_requested = Signal(str, str)   # kind ("artist"|"track"|"album"|"catno"), value
 
     def __init__(self, engine: PlayerEngine, parent=None):
         super().__init__(parent)
-        self._engine      = engine
-        self._seeking     = False
-        self._duration_ms = 0
+        self._engine         = engine
+        self._seeking        = False
+        self._duration_ms    = 0
+        self._current_row: dict | None = None
+        self._current_artist = ""
+        self._current_title  = ""
         self.setFixedHeight(_BAR_H)
         self.setStyleSheet(_BAR_STYLE)
         self._setup_ui()
@@ -151,15 +174,19 @@ class PlayerBar(QWidget):
         # No layout on self — all control blocks are positioned via resizeEvent.
 
         # ── Info row (full-width, top) ────────────────────────────────────
-        self._track_lbl = QLabel("—")
+        self._track_lbl = _LinkLabel("—")
         self._track_lbl.setObjectName("track_lbl")
         self._track_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._track_lbl.setTextFormat(Qt.TextFormat.PlainText)
+        self._track_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._track_lbl.setOpenExternalLinks(False)
+        self._track_lbl.linkActivated.connect(self._on_link)
 
-        self._meta_lbl = QLabel("")
+        self._meta_lbl = _LinkLabel("")
         self._meta_lbl.setObjectName("meta_lbl")
         self._meta_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._meta_lbl.setTextFormat(Qt.TextFormat.PlainText)
+        self._meta_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._meta_lbl.setOpenExternalLinks(False)
+        self._meta_lbl.linkActivated.connect(self._on_link)
 
         self._info_row = QWidget(self)
         il = QVBoxLayout(self._info_row)
@@ -287,21 +314,94 @@ class PlayerBar(QWidget):
 
     # ── Engine signals ────────────────────────────────────────────────────
 
+    # ── Link helpers ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _make_link(text: str, kind: str, value: str, color: str) -> str:
+        href = f"{kind}://{urllib.parse.quote(value)}"
+        return (
+            f'<a href="{href}" style="color:{color}; text-decoration:none;">'
+            f"{html.escape(text)}</a>"
+        )
+
+    def _release_search(self) -> str:
+        """Search term that uniquely identifies the current release: catno, else album title."""
+        if not self._current_row:
+            return ""
+        return (
+            (self._current_row.get("catalog_number") or "").strip()
+            or (self._current_row.get("title") or "").strip()
+        )
+
+    def _rebuild_track_label(self):
+        if not self._current_artist and not self._current_title:
+            self._track_lbl.setText("—")
+            return
+        c  = self._track_lbl.palette().color(QPalette.ColorRole.WindowText).name()
+        rs = self._release_search()
+        parts: list[str] = []
+        if self._current_artist:
+            parts.append(self._make_link(self._current_artist, "artist", self._current_artist, c))
+        if self._current_artist and self._current_title:
+            parts.append(f'<span style="color:{c};">  —  </span>')
+        if self._current_title:
+            parts.append(self._make_link(self._current_title, "release", rs, c))
+        self._track_lbl.setText("".join(parts))
+
+    def _rebuild_meta_label(self):
+        if not self._current_row:
+            self._meta_lbl.setText("")
+            return
+        c      = self._meta_lbl.palette().color(QPalette.ColorRole.PlaceholderText).name()
+        rs     = self._release_search()
+        album  = (self._current_row.get("title")          or "").strip()
+        cat_no = (self._current_row.get("catalog_number") or "").strip()
+        parts: list[str] = []
+        if album:
+            parts.append(self._make_link(album, "release", rs, c))
+        if album and cat_no:
+            parts.append(f'<span style="color:{c};">  —  </span>')
+        if cat_no:
+            parts.append(self._make_link(cat_no, "release", rs, c))
+        self._meta_lbl.setText("".join(parts))
+
+    def _refresh_link_cursor(self):
+        """If cursor is already over a label when text changes, re-fire MouseMove."""
+        for lbl in (self._track_lbl, self._meta_lbl):
+            local = lbl.mapFromGlobal(QCursor.pos())
+            if lbl.rect().contains(local):
+                QApplication.sendEvent(
+                    lbl,
+                    QMouseEvent(
+                        QEvent.Type.MouseMove, QPointF(local),
+                        Qt.MouseButton.NoButton, Qt.MouseButton.NoButton,
+                        Qt.KeyboardModifier.NoModifier,
+                    ),
+                )
+
+    def _on_link(self, href: str):
+        if "://" in href:
+            kind, _, encoded = href.partition("://")
+            value = urllib.parse.unquote(encoded)
+            self.navigate_requested.emit(kind, value)
+
+    # ── Engine signals ────────────────────────────────────────────────────
+
     def _on_track_changed(self, row: dict, path: str, track_idx: int, total: int):
-        # Line 1: placeholder until tag metadata arrives via metadata_changed
-        self._track_lbl.setText(Path(path).stem)
-
-        # Line 2: Release — Cat. No. (from database row)
-        album  = (row.get("title")          or "").strip()
-        cat_no = (row.get("catalog_number") or "").strip()
-        parts  = [p for p in (album, cat_no) if p]
-        self._meta_lbl.setText("  —  ".join(parts))
-
+        self._current_row    = row
+        self._current_artist = ""
+        self._current_title  = ""
+        # Show filename as placeholder until tag metadata arrives via metadata_changed
+        self._track_lbl.setText(html.escape(Path(path).stem))
+        self._rebuild_meta_label()
+        self._refresh_link_cursor()
         self._update_enabled(True)
 
     def _on_metadata_changed(self, artist: str, title: str):
-        line1 = f"{artist}  —  {title}" if artist else title
-        self._track_lbl.setText(line1)
+        self._current_artist = artist
+        self._current_title  = title
+        self._rebuild_track_label()
+        self._refresh_link_cursor()
 
     def _on_state_changed(self, playing: bool):
         self._btn_play.setText("⏸" if playing else "▶")

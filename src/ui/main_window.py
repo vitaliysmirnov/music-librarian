@@ -5,14 +5,17 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, QEvent, QObject, Signal
 from PySide6.QtGui import QIcon, QAction, QKeySequence, QPixmap, QPainter, QColor, QPen, QBrush
 from PySide6.QtWidgets import (
-    QMainWindow, QTabWidget, QStatusBar,
-    QLabel, QPushButton,
+    QMainWindow, QTabWidget, QStatusBar, QVBoxLayout,
+    QLabel, QPushButton, QWidget,
     QSystemTrayIcon, QMenu, QApplication, QMessageBox,
 )
 
 from src._version import __version__
 from src.database.db import Database
 from src.scanner.scanner import scan_all, scan_source
+from src.ui.player_bar import PlayerBar
+from src.ui.player_engine import PlayerEngine
+from src.ui.queue_panel import QueuePanel
 from src.ui.releases_tab import ReleasesTab
 from src.ui.settings_tab import SettingsTab, MODE_AUTO
 from src.ui.sources_tab import SourcesTab
@@ -90,11 +93,30 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self):
         self.setWindowTitle("Music Librarian")
-        self.resize(1100, 680)
+        self.resize(1100, 720)
+
+        # ── Player engine (no UI) ─────────────────────────────────────────
+        self._player_engine = PlayerEngine(self)
+
+        # ── Central widget: player bar on top, tabs below ─────────────────
+        container = QWidget(self)
+        vbox = QVBoxLayout(container)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setSpacing(0)
+
+        self._player_bar = PlayerBar(self._player_engine, container)
+        vbox.addWidget(self._player_bar)
 
         self._tabs = QTabWidget()
-        self.setCentralWidget(self._tabs)
+        vbox.addWidget(self._tabs)
 
+        self.setCentralWidget(container)
+
+        # ── Queue panel (floating child of container) ─────────────────────
+        self._queue_panel = QueuePanel(self._player_engine, container)
+        self._player_bar.queue_toggled.connect(self._toggle_queue)
+
+        # ── Tabs ──────────────────────────────────────────────────────────
         self._releases_tab = ReleasesTab(self._db)
         self._sources_tab = SourcesTab(self._db)
         self._settings_tab = SettingsTab(self._db, self._qt_log_handler)
@@ -107,6 +129,8 @@ class MainWindow(QMainWindow):
         self._settings_tab.settings_changed.connect(self._apply_settings)
         self._settings_tab.mask_changed.connect(self._on_mask_changed)
         self._releases_tab.release_trashed.connect(self._update_info_label)
+        self._releases_tab.play_requested.connect(self._player_engine.play_release)
+        self._releases_tab.enqueue_requested.connect(self._player_engine.enqueue_release)
 
         sb = QStatusBar()
         self.setStatusBar(sb)
@@ -122,6 +146,28 @@ class MainWindow(QMainWindow):
         sb.addPermanentWidget(scan_btn)
 
         self._refresh_all()
+
+    def _toggle_queue(self):
+        panel = self._queue_panel
+        if panel.isVisible():
+            panel.hide()
+            self._player_bar.set_queue_checked(False)
+            return
+        self._reposition_queue_panel()
+        panel.show()
+        panel.raise_()
+        self._player_bar.set_queue_checked(True)
+
+    def _reposition_queue_panel(self):
+        container = self.centralWidget()
+        x = container.width() - self._queue_panel.width() - 4
+        y = self._player_bar.height() + 4
+        self._queue_panel.move(x, y)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_queue_panel") and self._queue_panel.isVisible():
+            self._reposition_queue_panel()
 
     def _setup_menu(self):
         """Native macOS menu bar with proper roles (About, Preferences, Quit).

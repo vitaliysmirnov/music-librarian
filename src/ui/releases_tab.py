@@ -309,12 +309,14 @@ class ReleasesModel(QAbstractTableModel):
 
 
 class _PlayButtonDelegate(QStyledItemDelegate):
-    def __init__(self, db, toggle_expand_cb=None, proxy=None, artist_col_fn=None, parent=None):
+    def __init__(self, db, toggle_expand_cb=None, proxy=None, artist_col_fn=None,
+                 play_cb=None, parent=None):
         super().__init__(parent)
         self._db = db
         self._toggle_expand_cb = toggle_expand_cb
         self._proxy = proxy
         self._artist_col_fn = artist_col_fn
+        self._play_cb = play_cb
 
     def _proxy_artist(self, proxy_row: int) -> str:
         if self._proxy is None or self._artist_col_fn is None:
@@ -389,8 +391,11 @@ class _PlayButtonDelegate(QStyledItemDelegate):
                     if self._toggle_expand_cb:
                         self._toggle_expand_cb(row["folder_path"])
                 elif row["is_available"]:
-                    player = self._db.get_setting("audio_player_path", "")
-                    _play_release(row["folder_path"], player)
+                    if self._play_cb:
+                        self._play_cb(row)
+                    else:
+                        player = self._db.get_setting("audio_player_path", "")
+                        _play_release(row["folder_path"], player)
             return True
         return super().editorEvent(event, model, option, index)
 
@@ -545,9 +550,10 @@ def _make_stub(title: str) -> QWidget:
 
 
 class _RecentlyAddedPage(QWidget):
-    def __init__(self, db, parent=None):
+    def __init__(self, db, play_cb=None, parent=None):
         super().__init__(parent)
         self._db = db
+        self._play_cb = play_cb
         self._setup_ui()
 
     def _setup_ui(self):
@@ -586,6 +592,7 @@ class _RecentlyAddedPage(QWidget):
             self._db,
             proxy=self._proxy,
             artist_col_fn=lambda: self._model.col_for_token("artist"),
+            play_cb=self._play_cb,
             parent=self._table,
         )
         self._table.setItemDelegate(self._delegate)
@@ -648,7 +655,9 @@ class _RecentlyAddedPage(QWidget):
 
 
 class ReleasesTab(QWidget):
-    release_trashed = Signal()
+    release_trashed  = Signal()
+    play_requested   = Signal(dict)
+    enqueue_requested = Signal(dict)
 
     def __init__(self, db):
         super().__init__()
@@ -707,7 +716,7 @@ class ReleasesTab(QWidget):
 
         self._stack.addWidget(_make_stub("Home"))                  # 0
 
-        self._recent_page = _RecentlyAddedPage(self._db)
+        self._recent_page = _RecentlyAddedPage(self._db, play_cb=self._on_play_clicked)
         self._stack.addWidget(self._recent_page)                   # 1
 
         self._stack.addWidget(self._create_albums_widget())        # 2  releases
@@ -754,6 +763,7 @@ class ReleasesTab(QWidget):
             toggle_expand_cb=self._toggle_expand,
             proxy=self._proxy,
             artist_col_fn=lambda: self._model.col_for_token("artist"),
+            play_cb=self._on_play_clicked,
             parent=self._table,
         )
         self._table.setItemDelegate(self._delegate)
@@ -819,6 +829,9 @@ class ReleasesTab(QWidget):
 
         return widget
 
+    def _on_play_clicked(self, row: dict):
+        self.play_requested.emit(row)
+
     # ── Sidebar navigation ────────────────────────────────────────────────
 
     def _on_nav(self, key: str):
@@ -868,13 +881,20 @@ class ReleasesTab(QWidget):
 
         menu = QMenu(self)
 
+        act_play_now = menu.addAction("Play Now")
+        act_play_now.setEnabled(available and not is_container)
+        act_enqueue = menu.addAction("Add to Queue")
+        act_enqueue.setEnabled(available and not is_container)
+
         if player_path:
+            menu.addSeparator()
             player_name = Path(player_path.rstrip("/")).stem or player_path
             act_play = menu.addAction(f"Play with {player_name}")
             act_play.setEnabled(available and not is_container)
         else:
             act_play = None
 
+        menu.addSeparator()
         act_open = menu.addAction("Open Folder")
         act_open.setEnabled(available)
 
@@ -890,7 +910,11 @@ class ReleasesTab(QWidget):
         chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
         if chosen is None:
             return
-        if chosen == act_play:
+        if chosen == act_play_now:
+            self.play_requested.emit(row)
+        elif chosen == act_enqueue:
+            self.enqueue_requested.emit(row)
+        elif chosen == act_play:
             _play_release(row["folder_path"], player_path)
         elif chosen == act_open:
             self._open_release()

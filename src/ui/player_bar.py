@@ -13,33 +13,35 @@ from src.ui.player_engine import PlayerEngine
 
 
 class _LinkLabel(QLabel):
-    """QLabel that keeps PointingHandCursor when it contains links.
+    """QLabel that shows PointingHandCursor only over actual link text.
 
     QLabel's mouseMoveEvent delegates to QTextControl, which resets the cursor
-    to Arrow when its layout hasn't been computed yet (e.g. right after setText).
-    We re-apply PointingHandCursor after every super() call so QTextControl
-    cannot override us.
+    to Arrow when layout hasn't been computed yet (e.g. right after setText).
+    We track link-hover state via linkHovered and re-apply after super() so
+    QTextControl can't override us, while also never showing the hand cursor
+    over empty space between/around link text.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._has_links = False
+        self._over_link = False
+        self.linkHovered.connect(lambda url: setattr(self, '_over_link', bool(url)))
 
     def set_has_links(self, has_links: bool) -> None:
         self._has_links = has_links
-        if has_links:
-            self.setCursor(Qt.CursorShape.PointingHandCursor)
-        else:
+        self._over_link = False
+        if not has_links:
             self.unsetCursor()
-
-    def enterEvent(self, event: QEvent) -> None:
-        super().enterEvent(event)
-        if self._has_links:
-            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.repaint()  # force layout so QTextControl can hit-test links correctly
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        super().mouseMoveEvent(event)  # QTextControl may reset cursor here
+        super().mouseMoveEvent(event)  # QTextControl updates _over_link via linkHovered
         if self._has_links:
-            self.setCursor(Qt.CursorShape.PointingHandCursor)
+            if self._over_link:
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+            else:
+                self.unsetCursor()
 
 
 _SIDE_W    = 110   # fixed width of transport block and right block
@@ -292,14 +294,14 @@ class PlayerBar(QWidget):
         super().resizeEvent(event)
         w = self.width()
 
-        # Info row: full width, top
-        info_h = self._info_row.sizeHint().height()
-        self._info_row.setGeometry(0, 0, w, info_h)
-
         # Horizontal bounds of the centred control group
         g_w = min(w, _GROUP_MAX)
         g_x = (w - g_w) // 2
         inner_w = g_w - 2 * (_SIDE_W + 14)
+
+        # Info row: same width as control group so labels don't extend into margins
+        info_h = self._info_row.sizeHint().height()
+        self._info_row.setGeometry(g_x, 0, g_w, info_h)
 
         # Transport — centred on _TRANSPORT_CY
         self._transport.setGeometry(g_x, _TRANSPORT_CY - 14, _SIDE_W, 28)

@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -232,3 +233,60 @@ class PlayerEngine(QObject):
 
     def _on_audio_device_changed(self):
         self._audio.setDevice(QMediaDevices.defaultAudioOutput())
+
+    # ── Queue persistence ─────────────────────────────────────────────────
+
+    def save_queue_state(self, path: Path):
+        state = {
+            "current_idx": self._track_idx,
+            "tracks": [
+                {"path": t.path, "artist": t.artist, "title": t.title,
+                 "duration_ms": t.duration_ms, "row": t.row}
+                for t in self._queue
+            ],
+        }
+        try:
+            path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def restore_queue_state(self, path: Path):
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+
+        saved_tracks = state.get("tracks", [])
+        saved_idx    = state.get("current_idx", -1)
+        current_path = (
+            saved_tracks[saved_idx]["path"]
+            if 0 <= saved_idx < len(saved_tracks) else None
+        )
+
+        for t in saved_tracks:
+            p = t.get("path", "")
+            if Path(p).is_file():
+                self._queue.append(QueueTrack(
+                    row=t.get("row", {}),
+                    path=p,
+                    artist=t.get("artist", ""),
+                    title=t.get("title", ""),
+                    duration_ms=t.get("duration_ms", 0),
+                ))
+
+        if not self._queue:
+            return
+
+        self._track_idx = 0
+        if current_path:
+            for i, t in enumerate(self._queue):
+                if t.path == current_path:
+                    self._track_idx = i
+                    break
+
+        track = self._queue[self._track_idx]
+        self._player.setSource(QUrl.fromLocalFile(track.path))
+        self.track_changed.emit(track.row, track.path, self._track_idx, len(self._queue))
+        if track.title:
+            self.metadata_changed.emit(track.artist, track.title)
+        self.queue_changed.emit()

@@ -52,10 +52,12 @@ def _set_dock_visible(visible: bool) -> None:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, db: Database, qt_log_handler: QtLogHandler | None = None):
+    def __init__(self, db: Database, qt_log_handler: QtLogHandler | None = None,
+                 data_dir: Path | None = None):
         super().__init__()
         self._db = db
         self._qt_log_handler = qt_log_handler
+        self._data_dir = data_dir
         self._watcher: LibraryWatcher | None = None
 
         self._fs_signal = _FsChangeSignal()
@@ -84,6 +86,9 @@ class MainWindow(QMainWindow):
         self._check_drives()
         self._drive_timer.start()
         self._drive_monitor.start()
+
+        if self._data_dir:
+            self._player_engine.restore_queue_state(self._data_dir / "queue_state.json")
 
         self._updater = UpdateChecker(self)
         self._updater.update_available.connect(self._on_update_available)
@@ -503,6 +508,8 @@ class MainWindow(QMainWindow):
                 pass
 
     def quit(self):
+        if self._data_dir:
+            self._player_engine.save_queue_state(self._data_dir / "queue_state.json")
         self._check_drives()
         self._stop_watcher()
         self._drive_monitor.stop()

@@ -61,7 +61,7 @@ def main():
     from src.ui.theme import apply_theme
     apply_theme(db.get_setting("theme", "system"))
 
-    window = MainWindow(db, qt_handler)
+    window = MainWindow(db, qt_handler, data_dir=DATA_DIR)
     window.show()
     code = app.exec()
     log.info("Music Librarian stopped")

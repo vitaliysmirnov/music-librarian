@@ -272,6 +272,7 @@ class PlayerBar(QWidget):
 
     def _connect_engine(self):
         self._engine.track_changed.connect(self._on_track_changed)
+        self._engine.metadata_changed.connect(self._on_metadata_changed)
         self._engine.state_changed.connect(self._on_state_changed)
         self._engine.position_changed.connect(self._on_position)
         self._engine.duration_changed.connect(self._on_duration)
@@ -287,22 +288,20 @@ class PlayerBar(QWidget):
     # ── Engine signals ────────────────────────────────────────────────────
 
     def _on_track_changed(self, row: dict, path: str, track_idx: int, total: int):
-        artist  = (row.get("artist")          or "").strip()
-        album   = (row.get("title")           or "").strip()
-        cat_no  = (row.get("catalog_number")  or "").strip()
-        stem    = Path(path).stem
+        # Line 1: placeholder until tag metadata arrives via metadata_changed
+        self._track_lbl.setText(Path(path).stem)
 
-        # Line 1: Artist — Track Name  [n/total]
-        line1 = f"{artist}  —  {stem}" if artist else stem
-        if total > 1:
-            line1 += f"  [{track_idx + 1}/{total}]"
-        self._track_lbl.setText(line1)
-
-        # Line 2: Release — Cat. No.
-        parts = [p for p in (album, cat_no) if p]
+        # Line 2: Release — Cat. No. (from database row)
+        album  = (row.get("title")          or "").strip()
+        cat_no = (row.get("catalog_number") or "").strip()
+        parts  = [p for p in (album, cat_no) if p]
         self._meta_lbl.setText("  —  ".join(parts))
 
         self._update_enabled(True)
+
+    def _on_metadata_changed(self, artist: str, title: str):
+        line1 = f"{artist}  —  {title}" if artist else title
+        self._track_lbl.setText(line1)
 
     def _on_state_changed(self, playing: bool):
         self._btn_play.setText("⏸" if playing else "▶")

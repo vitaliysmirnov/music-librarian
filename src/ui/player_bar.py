@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtGui import QMouseEvent, QPalette
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
+    QApplication, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
 )
 
 from src.ui.player_engine import PlayerEngine
@@ -374,7 +374,7 @@ class PlayerBar(QWidget):
             self._track_lbl.set_has_links(False)
             self._track_lbl.setToolTip("")
             return
-        c  = self._track_lbl.palette().color(QPalette.ColorRole.WindowText).name()
+        c  = QApplication.palette().color(QPalette.ColorRole.WindowText).name()
         parts: list[str] = []
         if self._current_artist:
             parts.append(self._make_link(
@@ -401,7 +401,7 @@ class PlayerBar(QWidget):
             self._meta_lbl.set_has_links(False)
             self._meta_lbl.setToolTip("")
             return
-        c      = self._meta_lbl.palette().color(QPalette.ColorRole.PlaceholderText).name()
+        c      = QApplication.palette().color(QPalette.ColorRole.PlaceholderText).name()
         as_    = self._album_search()
         album  = (self._current_row.get("title")          or "").strip()
         cat_no = (self._current_row.get("catalog_number") or "").strip()
@@ -446,6 +446,12 @@ class PlayerBar(QWidget):
         self._current_artist = artist
         self._current_title  = title
         self._rebuild_track_label()
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange:
+            self._rebuild_track_label()
+            self._rebuild_meta_label()
 
     def _on_state_changed(self, playing: bool):
         self._btn_play.setText("⏸" if playing else "▶")

@@ -83,6 +83,9 @@ class PlayerEngine(QObject):
     def is_playing(self) -> bool:
         return self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
 
+    def _is_stopped(self) -> bool:
+        return self._player.playbackState() == QMediaPlayer.PlaybackState.StoppedState
+
     def volume(self) -> float:
         return self._audio.volume()
 
@@ -105,7 +108,7 @@ class PlayerEngine(QObject):
             artist, title, duration_ms = _read_track_tags(p)
             self._queue.append(QueueTrack(row=row, path=p, artist=artist, title=title, duration_ms=duration_ms))
         self.queue_changed.emit()
-        if self._track_idx < 0 and self._queue:
+        if self._track_idx < 0 and self._queue and self._is_stopped():
             self._play_at(0)
 
     def enqueue_tracks(self, paths: list[str]):
@@ -118,16 +121,17 @@ class PlayerEngine(QObject):
             added = True
         if added:
             self.queue_changed.emit()
-            if self._track_idx < 0:
+            if self._track_idx < 0 and self._is_stopped():
                 self._play_at(0)
 
     def clear_queue(self):
-        """Stop playback and empty the queue."""
-        self._player.stop()
+        is_active = self._player.playbackState() != QMediaPlayer.PlaybackState.StoppedState
         self._queue.clear()
         self._track_idx = -1
         self.queue_changed.emit()
-        self.state_changed.emit(False)
+        if not is_active:
+            self._player.stop()
+            self.state_changed.emit(False)
 
     def play_track_at(self, idx: int):
         self._play_at(idx)
@@ -139,7 +143,6 @@ class PlayerEngine(QObject):
         if idx < self._track_idx:
             self._track_idx -= 1
         elif idx == self._track_idx:
-            self._player.stop()
             self._track_idx = -1
         self.queue_changed.emit()
 
@@ -159,9 +162,12 @@ class PlayerEngine(QObject):
         self.queue_changed.emit()
 
     def play_pause(self):
-        if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+        state = self._player.playbackState()
+        if state == QMediaPlayer.PlaybackState.PlayingState:
             self._player.pause()
         elif self._track_idx >= 0:
+            self._player.play()
+        elif state == QMediaPlayer.PlaybackState.PausedState:
             self._player.play()
         elif self._queue:
             self._play_at(0)
@@ -193,9 +199,11 @@ class PlayerEngine(QObject):
             self.metadata_changed.emit(track.artist, track.title)
 
     def _advance(self):
-        if not self._queue or self._track_idx < 0:
+        if not self._queue:
             return
-        if self._track_idx + 1 < len(self._queue):
+        if self._track_idx < 0:
+            self._play_at(0)
+        elif self._track_idx + 1 < len(self._queue):
             self._play_at(self._track_idx + 1)
         else:
             self._player.stop()

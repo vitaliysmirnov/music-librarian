@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from PySide6.QtCore import QSize, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import QPoint, QRect, QSize, QTimer, Qt, Signal
+from PySide6.QtGui import QColor, QDrag, QFont, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QFrame, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QPushButton,
@@ -135,6 +135,44 @@ class _QueueList(QListWidget):
 
     # ── Qt drag events ────────────────────────────────────────────────────
 
+    def startDrag(self, supported_actions):
+        selected = self.selectedItems()
+        if not selected:
+            super().startDrag(supported_actions)
+            return
+
+        text = selected[0].data(Qt.ItemDataRole.UserRole) or ""
+        if not text:
+            super().startDrag(supported_actions)
+            return
+
+        font = QFont()
+        font.setPixelSize(10)
+        fm      = QFontMetrics(font)
+        text_w  = fm.horizontalAdvance(text)
+        text_h  = fm.height()
+        gap     = 12          # distance between cursor and text
+        pad_y   = 4
+        pix_w   = gap + text_w + 4
+        pix_h   = text_h + pad_y * 2
+
+        pixmap = QPixmap(pix_w, pix_h)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        p = QPainter(pixmap)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setOpacity(0.60)
+        p.setFont(font)
+        p.setPen(self.palette().color(self.palette().ColorRole.WindowText))
+        p.drawText(QRect(gap, pad_y, text_w + 4, text_h), Qt.AlignmentFlag.AlignLeft, text)
+        p.end()
+
+        drag = QDrag(self)
+        drag.setMimeData(self.model().mimeData(self.selectedIndexes()))
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(QPoint(0, pix_h // 2))
+        drag.exec(supported_actions)
+
     def dragMoveEvent(self, event):
         self._insert_row = self._insert_row_at(event.position().toPoint())
         self._update_drop_line(self._insert_row)
@@ -213,6 +251,13 @@ class QueuePanel(QFrame):
             return
 
         for i, track in enumerate(queue):
+            if track.artist and track.title:
+                label_text = f"{track.artist}  —  {track.title}"
+            elif track.title:
+                label_text = track.title
+            else:
+                label_text = Path(track.path).stem
+
             item = QListWidgetItem()
             item.setFlags(
                 Qt.ItemFlag.ItemIsEnabled |
@@ -220,21 +265,15 @@ class QueuePanel(QFrame):
                 Qt.ItemFlag.ItemIsDragEnabled |
                 Qt.ItemFlag.ItemIsDropEnabled
             )
+            item.setData(Qt.ItemDataRole.UserRole, label_text)
             item.setSizeHint(QSize(self._list.width() - 4, _ITEM_H))
             self._list.addItem(item)
-            self._list.setItemWidget(item, self._make_row(item, track, i == cur))
+            self._list.setItemWidget(item, self._make_row(item, label_text, i == cur))
 
         n = len(queue)
         self.setFixedHeight(min(400, 50 + n * (_ITEM_H + 1) + 8))
 
-    def _make_row(self, item: QListWidgetItem, track: QueueTrack, is_current: bool) -> QWidget:
-        if track.artist and track.title:
-            text = f"{track.artist}  —  {track.title}"
-        elif track.title:
-            text = track.title
-        else:
-            text = Path(track.path).stem
-
+    def _make_row(self, item: QListWidgetItem, text: str, is_current: bool) -> QWidget:
         w  = QWidget()
         hl = QHBoxLayout(w)
         hl.setContentsMargins(14, 0, 14, 0)

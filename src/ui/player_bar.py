@@ -11,11 +11,11 @@ _SIDE_W    = 110   # fixed width of transport block and right block
 _GROUP_MAX = 780   # controls group never grows wider than this
 
 # ── Independent vertical positions (centre-y from bar top, px) ──────────
-_BAR_H        =  64   # total bar height
-_TRANSPORT_CY =  33   # ⏮ ▶ ⏭
-_VOL_CY       =  33   # 🔊 (volume slider)
-_QUEUE_CY     =  33   # ☰  (queue button, independent)
-_PROGRESS_CY  =  53   # progress bar
+_BAR_H        =  58   # total bar height
+_TRANSPORT_CY =  30   # ⏮ ▶ ⏭
+_VOL_CY       =  30   # 🔊 (volume slider)
+_QUEUE_CY     =  30   # ☰  (queue button, independent)
+_PROGRESS_CY  =  47   # progress bar
 
 _BAR_STYLE = """
 PlayerBar {
@@ -163,7 +163,7 @@ class PlayerBar(QWidget):
 
         self._info_row = QWidget(self)
         il = QVBoxLayout(self._info_row)
-        il.setContentsMargins(12, 6, 12, 2)
+        il.setContentsMargins(12, 3, 12, 1)
         il.setSpacing(1)
         il.addWidget(self._track_lbl)
         il.addWidget(self._meta_lbl)

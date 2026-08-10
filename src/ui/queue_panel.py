@@ -22,6 +22,12 @@ QueuePanel QLabel#title_lbl {
     padding: 10px 14px 4px 14px;
     color: palette(windowText);
 }
+QueuePanel QLabel#footer_lbl {
+    font-size: 11px;
+    font-weight: 600;
+    color: palette(placeholderText);
+    padding: 4px 14px 2px 14px;
+}
 QueuePanel QListWidget {
     background: transparent;
     border: none;
@@ -235,6 +241,10 @@ class QueuePanel(QFrame):
         self._list.move_requested.connect(self._on_move_requested)
         layout.addWidget(self._list)
 
+        self._footer_lbl = QLabel("")
+        self._footer_lbl.setObjectName("footer_lbl")
+        layout.addWidget(self._footer_lbl)
+
     # ── Refresh ───────────────────────────────────────────────────────────
 
     def _refresh(self):
@@ -247,6 +257,7 @@ class QueuePanel(QFrame):
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             self._list.addItem(item)
+            self._footer_lbl.setText("")
             self.setFixedHeight(100)
             return
 
@@ -271,7 +282,10 @@ class QueuePanel(QFrame):
             self._list.setItemWidget(item, self._make_row(item, label_text, i == cur))
 
         n = len(queue)
-        self.setFixedHeight(min(400, 50 + n * (_ITEM_H + 1) + 8))
+        total_s = sum(t.duration_ms for t in queue) // 1000
+        mins, secs = divmod(total_s, 60)
+        self._footer_lbl.setText(f"{n} tracks,  {mins} min {secs:02d} sec")
+        self.setFixedHeight(min(400, 50 + n * (_ITEM_H + 1) + 26 + 8))
 
     def _make_row(self, item: QListWidgetItem, text: str, is_current: bool) -> QWidget:
         w  = QWidget()

@@ -21,18 +21,19 @@ def _audio_paths(folder_path: str) -> list[str]:
     )
 
 
-def _read_track_tags(path: str) -> tuple[str, str]:
-    """Return (artist, title) from file tags; falls back to ("", stem)."""
+def _read_track_tags(path: str) -> tuple[str, str, int]:
+    """Return (artist, title, duration_ms) from file tags; falls back to ("", stem, 0)."""
     try:
         audio = MutagenFile(path, easy=True)
-        if audio and audio.tags:
-            t = audio.tags
+        if audio:
+            t = audio.tags or {}
             artist = next((t[k][0] for k in ("artist", "albumartist") if k in t), "")
             title  = t.get("title", [Path(path).stem])[0]
-            return artist.strip(), title.strip()
+            duration_ms = int(getattr(audio.info, "length", 0) * 1000)
+            return artist.strip(), title.strip(), duration_ms
     except Exception:
         pass
-    return "", Path(path).stem
+    return "", Path(path).stem, 0
 
 
 @dataclass
@@ -41,6 +42,7 @@ class QueueTrack:
     path: str
     artist: str
     title: str
+    duration_ms: int = 0
 
 
 class PlayerEngine(QObject):
@@ -91,8 +93,8 @@ class PlayerEngine(QObject):
         self._queue.clear()
         self._track_idx = -1
         for p in _audio_paths(row["folder_path"]):
-            artist, title = _read_track_tags(p)
-            self._queue.append(QueueTrack(row=row, path=p, artist=artist, title=title))
+            artist, title, duration_ms = _read_track_tags(p)
+            self._queue.append(QueueTrack(row=row, path=p, artist=artist, title=title, duration_ms=duration_ms))
         self.queue_changed.emit()
         if self._queue:
             self._play_at(0)
@@ -100,8 +102,8 @@ class PlayerEngine(QObject):
     def enqueue_release(self, row: dict):
         """Append all tracks from release; start playback if currently idle."""
         for p in _audio_paths(row["folder_path"]):
-            artist, title = _read_track_tags(p)
-            self._queue.append(QueueTrack(row=row, path=p, artist=artist, title=title))
+            artist, title, duration_ms = _read_track_tags(p)
+            self._queue.append(QueueTrack(row=row, path=p, artist=artist, title=title, duration_ms=duration_ms))
         self.queue_changed.emit()
         if self._track_idx < 0 and self._queue:
             self._play_at(0)

@@ -3,7 +3,7 @@ from pathlib import Path
 
 from mutagen import File as MutagenFile
 from PySide6.QtCore import QObject, QUrl, Signal
-from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer
+from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaMetaData, QMediaPlayer
 
 _AUDIO_EXTENSIONS = {
     ".flac", ".mp3", ".wav", ".aiff", ".aif", ".m4a", ".alac",
@@ -69,6 +69,9 @@ class PlayerEngine(QObject):
         self._player.metaDataChanged.connect(self._on_metadata_changed)
         self._player.positionChanged.connect(lambda ms: self.position_changed.emit(int(ms)))
         self._player.durationChanged.connect(lambda ms: self.duration_changed.emit(int(ms)))
+
+        self._media_devices = QMediaDevices(self)
+        self._media_devices.audioOutputsChanged.connect(self._on_audio_device_changed)
 
     # ── Read-only state ───────────────────────────────────────────────────
 
@@ -226,3 +229,6 @@ class PlayerEngine(QObject):
         title  = meta.stringValue(QMediaMetaData.Key.Title).strip()
         if title:
             self.metadata_changed.emit(artist, title)
+
+    def _on_audio_device_changed(self):
+        self._audio.setDevice(QMediaDevices.defaultAudioOutput())

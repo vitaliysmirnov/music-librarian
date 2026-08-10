@@ -1,29 +1,45 @@
 import html
+import re
 import urllib.parse
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QEvent, QPointF, Signal
-from PySide6.QtGui import QCursor, QMouseEvent, QPalette
+from PySide6.QtCore import Qt, QEvent, Signal
+from PySide6.QtGui import QMouseEvent, QPalette
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
 )
 
 from src.ui.player_engine import PlayerEngine
 
 
 class _LinkLabel(QLabel):
-    """QLabel that re-fires MouseMove on Enter so Qt detects links immediately."""
+    """QLabel that keeps PointingHandCursor when it contains links.
+
+    QLabel's mouseMoveEvent delegates to QTextControl, which resets the cursor
+    to Arrow when its layout hasn't been computed yet (e.g. right after setText).
+    We re-apply PointingHandCursor after every super() call so QTextControl
+    cannot override us.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._has_links = False
+
+    def set_has_links(self, has_links: bool) -> None:
+        self._has_links = has_links
+        if has_links:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.unsetCursor()
+
     def enterEvent(self, event: QEvent) -> None:
         super().enterEvent(event)
-        pos = QPointF(self.mapFromGlobal(QCursor.pos()))
-        QApplication.sendEvent(
-            self,
-            QMouseEvent(
-                QEvent.Type.MouseMove, pos,
-                Qt.MouseButton.NoButton, Qt.MouseButton.NoButton,
-                Qt.KeyboardModifier.NoModifier,
-            ),
-        )
+        if self._has_links:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        super().mouseMoveEvent(event)  # QTextControl may reset cursor here
+        if self._has_links:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
 
 
 _SIDE_W    = 110   # fixed width of transport block and right block
@@ -324,60 +340,59 @@ class PlayerBar(QWidget):
             f"{html.escape(text)}</a>"
         )
 
-    def _release_search(self) -> str:
-        """Search term that uniquely identifies the current release: catno, else album title."""
+    def _track_search(self) -> str:
+        parts = [self._current_artist, self._current_title]
+        return " ".join(p for p in parts if p)
+
+    def _album_search(self) -> str:
         if not self._current_row:
             return ""
-        return (
-            (self._current_row.get("catalog_number") or "").strip()
-            or (self._current_row.get("title") or "").strip()
-        )
+        artist = (self._current_artist
+                  or (self._current_row.get("artist") or "")).strip()
+        album  = (self._current_row.get("title") or "").strip()
+        return " ".join(p for p in [artist, album] if p)
+
+    def _catno_search(self) -> str:
+        if not self._current_row:
+            return ""
+        catno = (self._current_row.get("catalog_number") or "").strip()
+        # Strip punctuation so "ABC-001" → "ABC 001"; search matches word-by-word
+        return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", catno)).strip()
 
     def _rebuild_track_label(self):
         if not self._current_artist and not self._current_title:
             self._track_lbl.setText("—")
+            self._track_lbl.set_has_links(False)
             return
         c  = self._track_lbl.palette().color(QPalette.ColorRole.WindowText).name()
-        rs = self._release_search()
         parts: list[str] = []
         if self._current_artist:
             parts.append(self._make_link(self._current_artist, "artist", self._current_artist, c))
         if self._current_artist and self._current_title:
             parts.append(f'<span style="color:{c};">  —  </span>')
         if self._current_title:
-            parts.append(self._make_link(self._current_title, "release", rs, c))
+            parts.append(self._make_link(self._current_title, "release", self._track_search(), c))
         self._track_lbl.setText("".join(parts))
+        self._track_lbl.set_has_links(True)
 
     def _rebuild_meta_label(self):
         if not self._current_row:
             self._meta_lbl.setText("")
+            self._meta_lbl.set_has_links(False)
             return
         c      = self._meta_lbl.palette().color(QPalette.ColorRole.PlaceholderText).name()
-        rs     = self._release_search()
+        as_    = self._album_search()
         album  = (self._current_row.get("title")          or "").strip()
         cat_no = (self._current_row.get("catalog_number") or "").strip()
         parts: list[str] = []
         if album:
-            parts.append(self._make_link(album, "release", rs, c))
+            parts.append(self._make_link(album, "release", as_, c))
         if album and cat_no:
             parts.append(f'<span style="color:{c};">  —  </span>')
         if cat_no:
-            parts.append(self._make_link(cat_no, "release", rs, c))
+            parts.append(self._make_link(cat_no, "release", self._catno_search(), c))
         self._meta_lbl.setText("".join(parts))
-
-    def _refresh_link_cursor(self):
-        """If cursor is already over a label when text changes, re-fire MouseMove."""
-        for lbl in (self._track_lbl, self._meta_lbl):
-            local = lbl.mapFromGlobal(QCursor.pos())
-            if lbl.rect().contains(local):
-                QApplication.sendEvent(
-                    lbl,
-                    QMouseEvent(
-                        QEvent.Type.MouseMove, QPointF(local),
-                        Qt.MouseButton.NoButton, Qt.MouseButton.NoButton,
-                        Qt.KeyboardModifier.NoModifier,
-                    ),
-                )
+        self._meta_lbl.set_has_links(bool(parts))
 
     def _on_link(self, href: str):
         if "://" in href:
@@ -391,17 +406,15 @@ class PlayerBar(QWidget):
         self._current_row    = row
         self._current_artist = ""
         self._current_title  = ""
-        # Show filename as placeholder until tag metadata arrives via metadata_changed
         self._track_lbl.setText(html.escape(Path(path).stem))
+        self._track_lbl.set_has_links(False)
         self._rebuild_meta_label()
-        self._refresh_link_cursor()
         self._update_enabled(True)
 
     def _on_metadata_changed(self, artist: str, title: str):
         self._current_artist = artist
         self._current_title  = title
         self._rebuild_track_label()
-        self._refresh_link_cursor()
 
     def _on_state_changed(self, playing: bool):
         self._btn_play.setText("⏸" if playing else "▶")

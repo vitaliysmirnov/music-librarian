@@ -45,7 +45,7 @@ class _LinkLabel(QLabel):
                 self.unsetCursor()
 
 
-_SIDE_W    = 110   # fixed width of transport block and right block
+_SIDE_W    = 130   # fixed width of transport block and right block
 _GROUP_MAX = 780   # controls group never grows wider than this
 
 # ── Independent vertical positions (centre-y from bar top, px) ──────────
@@ -150,6 +150,20 @@ PlayerBar QSlider#vol_slider::handle:horizontal {
     background: palette(buttonText);
 }
 
+/* ── Like button ── */
+PlayerBar QPushButton#btn_like {
+    border: none;
+    background: transparent;
+    color: palette(placeholderText);
+    font-size: 15px;
+    padding: 0;
+    border-radius: 5px;
+}
+PlayerBar QPushButton#btn_like:hover:!disabled   { background: rgba(128,128,128,45); color: palette(buttonText); }
+PlayerBar QPushButton#btn_like:checked           { color: #e0405a; }
+PlayerBar QPushButton#btn_like:checked:hover     { background: rgba(128,128,128,45); color: #e0405a; }
+PlayerBar QPushButton#btn_like:disabled          { color: palette(mid); }
+
 /* ── Queue button ── */
 PlayerBar QPushButton#btn_queue {
     border: none;
@@ -168,6 +182,7 @@ PlayerBar QPushButton#btn_queue:checked { color: #3875d7; }
 class PlayerBar(QWidget):
     queue_toggled      = Signal()
     navigate_requested = Signal(str, str)   # kind ("artist"|"track"|"album"|"catno"), value
+    like_toggled       = Signal(str, dict, bool)  # path, row, is_liked
 
     def __init__(self, engine: PlayerEngine, parent=None):
         super().__init__(parent)
@@ -175,6 +190,7 @@ class PlayerBar(QWidget):
         self._seeking        = False
         self._duration_ms    = 0
         self._current_row: dict | None = None
+        self._current_path   = ""
         self._current_artist = ""
         self._current_title  = ""
         self.setFixedHeight(_BAR_H)
@@ -227,11 +243,21 @@ class PlayerBar(QWidget):
         self._btn_play.clicked.connect(self._engine.play_pause)
         self._btn_next.clicked.connect(self._engine.next)
 
+        self._btn_like = QPushButton("♡")
+        self._btn_like.setObjectName("btn_like")
+        self._btn_like.setToolTip("Like / Unlike")
+        self._btn_like.setCheckable(True)
+        self._btn_like.setFixedSize(26, 28)
+        self._btn_like.setEnabled(False)
+        self._btn_like.toggled.connect(self._on_like_toggled)
+
         self._transport = QWidget(self)
         tl = QHBoxLayout(self._transport)
         tl.setContentsMargins(0, 0, 0, 0)
         tl.setSpacing(2)
         tl.addStretch()
+        tl.addWidget(self._btn_like)
+        tl.addSpacing(4)
         tl.addWidget(self._btn_prev)
         tl.addWidget(self._btn_play)
         tl.addWidget(self._btn_next)
@@ -324,8 +350,17 @@ class PlayerBar(QWidget):
     def queue_button(self) -> QPushButton:
         return self._btn_queue
 
+    def current_path(self) -> str:
+        return self._current_path
+
     def set_queue_checked(self, checked: bool):
         self._btn_queue.setChecked(checked)
+
+    def set_liked(self, liked: bool):
+        self._btn_like.blockSignals(True)
+        self._btn_like.setChecked(liked)
+        self._btn_like.setText("♥" if liked else "♡")
+        self._btn_like.blockSignals(False)
 
     # ── Engine signals ────────────────────────────────────────────────────
 
@@ -432,8 +467,14 @@ class PlayerBar(QWidget):
 
     # ── Engine signals ────────────────────────────────────────────────────
 
+    def _on_like_toggled(self, checked: bool):
+        self._btn_like.setText("♥" if checked else "♡")
+        if self._current_path and self._current_row is not None:
+            self.like_toggled.emit(self._current_path, self._current_row, checked)
+
     def _on_track_changed(self, row: dict, path: str, track_idx: int, total: int):
         self._current_row    = row
+        self._current_path   = path
         self._current_artist = ""
         self._current_title  = ""
         self._track_lbl.setText(html.escape(Path(path).stem))
@@ -477,5 +518,5 @@ class PlayerBar(QWidget):
             self._engine.seek(int(self._progress.value() / 1000 * self._duration_ms))
 
     def _update_enabled(self, enabled: bool):
-        for w in (self._btn_prev, self._btn_play, self._btn_next, self._progress):
+        for w in (self._btn_prev, self._btn_play, self._btn_next, self._progress, self._btn_like):
             w.setEnabled(enabled)

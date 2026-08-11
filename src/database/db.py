@@ -55,6 +55,16 @@ CREATE TABLE IF NOT EXISTS releases (
 CREATE INDEX IF NOT EXISTS idx_releases_source  ON releases(source_id);
 CREATE INDEX IF NOT EXISTS idx_releases_artist  ON releases(artist);
 CREATE INDEX IF NOT EXISTS idx_releases_title   ON releases(title);
+
+CREATE TABLE IF NOT EXISTS liked_tracks (
+    path        TEXT    PRIMARY KEY,
+    artist      TEXT    NOT NULL DEFAULT '',
+    title       TEXT    NOT NULL DEFAULT '',
+    album       TEXT    NOT NULL DEFAULT '',
+    folder_path TEXT    NOT NULL DEFAULT '',
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    date_liked  TEXT    NOT NULL
+);
 """
 
 
@@ -432,3 +442,33 @@ class Database:
     def clear_releases(self):
         with self.conn() as c:
             c.execute("DELETE FROM releases")
+
+    # ── Liked tracks ──────────────────────────────────────────────────────────
+
+    def like_track(self, path: str, artist: str, title: str, album: str,
+                   folder_path: str, duration_ms: int) -> None:
+        with self.conn() as c:
+            c.execute(
+                """INSERT OR REPLACE INTO liked_tracks
+                   (path, artist, title, album, folder_path, duration_ms, date_liked)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (path, artist, title, album, folder_path, duration_ms,
+                 datetime.now().isoformat(timespec="seconds")),
+            )
+
+    def unlike_track(self, path: str) -> None:
+        with self.conn() as c:
+            c.execute("DELETE FROM liked_tracks WHERE path = ?", (path,))
+
+    def is_track_liked(self, path: str) -> bool:
+        with self.conn() as c:
+            return c.execute(
+                "SELECT 1 FROM liked_tracks WHERE path = ?", (path,)
+            ).fetchone() is not None
+
+    def get_liked_tracks(self) -> list:
+        with self.conn() as c:
+            return c.execute(
+                """SELECT path, artist, title, album, folder_path, duration_ms, date_liked
+                   FROM liked_tracks ORDER BY date_liked DESC"""
+            ).fetchall()

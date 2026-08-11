@@ -19,6 +19,7 @@ from src.scanner.mask import DEFAULT_MASK, KNOWN_TOKENS, get_custom_tokens
 from src.utils import open_path
 from src.utils.audio import AUDIO_EXTENSIONS
 from src.ui.edit_release_dialog import EditReleaseDialog
+from src.ui.liked_view import LikedTracksView
 from src.ui.tracklist_popup import TracklistPopup
 from src.ui.sidebar_panel import SidebarPanel
 from src.ui.style import ROW_HEIGHT, TABLE_STYLE, SEARCH_STYLE
@@ -96,7 +97,7 @@ def _audio_files(folder_path: str) -> list[Path]:
     folder = Path(folder_path)
     return sorted(
         f for f in folder.iterdir()
-        if f.is_file() and f.suffix.lower() in _AUDIO_EXTENSIONS
+        if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
     )
 
 
@@ -555,6 +556,7 @@ class _ReleasesView(QWidget):
     enqueue_track_requested   = Signal(list, dict)
     release_trashed           = Signal()
     column_visibility_changed = Signal(int, bool)  # logical_idx, hidden
+    liked_changed             = Signal()
 
     def __init__(self, db, query_fn, *,
                  sortable: bool = True,
@@ -706,8 +708,13 @@ class _ReleasesView(QWidget):
         self._tracklist_popup = TracklistPopup(row, self._db, self.window())
         self._tracklist_popup.play_track.connect(self.play_track_requested)
         self._tracklist_popup.enqueue_track.connect(self.enqueue_track_requested)
+        self._tracklist_popup.liked_changed.connect(self.liked_changed)
         self._tracklist_popup.finished.connect(lambda: setattr(self, "_tracklist_popup", None))
         self._tracklist_popup.show()
+
+    def sync_popup_like(self, path: str, liked: bool) -> None:
+        if self._tracklist_popup is not None:
+            self._tracklist_popup.sync_like(path, liked)
 
     # ── Row context menu ───────────────────────────────────────────────────────
 
@@ -1029,6 +1036,7 @@ class ReleasesTab(QWidget):
     enqueue_requested       = Signal(dict)
     play_track_requested    = Signal(list, dict)
     enqueue_track_requested = Signal(list, dict)
+    liked_changed           = Signal()
 
     def __init__(self, db):
         super().__init__()
@@ -1094,9 +1102,15 @@ class ReleasesTab(QWidget):
         self._releases_view.play_track_requested.connect(self.play_track_requested)
         self._releases_view.enqueue_track_requested.connect(self.enqueue_track_requested)
         self._releases_view.release_trashed.connect(self.release_trashed)
+        self._releases_view.liked_changed.connect(self._on_liked_changed)
+
+        self._liked_view = LikedTracksView(self._db)
+        self._liked_view.play_track_requested.connect(self.play_track_requested)
+        self._liked_view.enqueue_track_requested.connect(self.enqueue_track_requested)
+        self._liked_view.track_unliked.connect(self._on_liked_changed)
 
         self._stack.addWidget(self._releases_view)             # 0  releases
-        self._stack.addWidget(_make_stub("Liked"))             # 1
+        self._stack.addWidget(self._liked_view)                # 1
         self._stack.addWidget(_make_stub("All Playlists"))     # 2
 
         self._sidebar.nav_changed.connect(self._on_nav)
@@ -1110,11 +1124,17 @@ class ReleasesTab(QWidget):
         self._stack.setCurrentIndex(_NAV_PAGE["releases"])
         self._search.setText(value)
 
+    def _on_liked_changed(self):
+        self._liked_view.refresh()
+        self.liked_changed.emit()
+
     def _on_nav(self, key: str):
         self._stack.setCurrentIndex(_NAV_PAGE.get(key, _NAV_PAGE["releases"]))
         if key == "releases":
             self._releases_view.invalidate_header_cache()
             self._releases_view.sync_header()
+        elif key == "liked":
+            self._liked_view.refresh()
 
     def _on_search_changed(self, text: str):
         if text.strip():
@@ -1129,6 +1149,12 @@ class ReleasesTab(QWidget):
         token_order  = _known_token_order(mask)
         extra_tokens = get_custom_tokens(mask)
         self._releases_view.refresh(token_order, extra_tokens)
+
+    def refresh_liked(self):
+        self._liked_view.refresh()
+
+    def sync_popup_like(self, path: str, liked: bool) -> None:
+        self._releases_view.sync_popup_like(path, liked)
 
     def invalidate_header_state(self):
         self._releases_view.invalidate_header_state()

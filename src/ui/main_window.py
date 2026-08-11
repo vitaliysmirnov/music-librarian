@@ -138,7 +138,10 @@ class MainWindow(QMainWindow):
         self._releases_tab.enqueue_requested.connect(self._player_engine.enqueue_release)
         self._releases_tab.play_track_requested.connect(self._player_engine.play_tracks)
         self._releases_tab.enqueue_track_requested.connect(self._player_engine.enqueue_tracks)
+        self._releases_tab.liked_changed.connect(self._on_liked_changed)
         self._player_bar.navigate_requested.connect(self._on_navigate_requested)
+        self._player_bar.like_toggled.connect(self._on_like_toggled)
+        self._player_engine.track_changed.connect(self._on_track_changed_liked)
 
         sb = QStatusBar()
         self.setStatusBar(sb)
@@ -154,6 +157,27 @@ class MainWindow(QMainWindow):
         sb.addPermanentWidget(scan_btn)
 
         self._refresh_all()
+
+    def _on_liked_changed(self):
+        self._releases_tab.refresh_liked()
+        path = self._player_bar.current_path()
+        if path:
+            self._player_bar.set_liked(self._db.is_track_liked(path))
+
+    def _on_like_toggled(self, path: str, row: dict, checked: bool):
+        if checked:
+            from src.ui.player_engine import _read_track_tags
+            artist, title, duration_ms = _read_track_tags(path)
+            album       = (row.get("title") or "").strip()
+            folder_path = (row.get("folder_path") or str(Path(path).parent))
+            self._db.like_track(path, artist, title, album, folder_path, duration_ms)
+        else:
+            self._db.unlike_track(path)
+        self._releases_tab.refresh_liked()
+        self._releases_tab.sync_popup_like(path, checked)
+
+    def _on_track_changed_liked(self, row: dict, path: str, track_idx: int, total: int):
+        self._player_bar.set_liked(self._db.is_track_liked(path))
 
     def _on_navigate_requested(self, kind: str, value: str):
         self._tabs.setCurrentWidget(self._releases_tab)

@@ -52,9 +52,12 @@ def main():
     app.setApplicationDisplayName("Music Librarian")
     app.setOrganizationName("music-librarian")
 
-    # macOS: dock icon comes from the bundle's .icns — setWindowIcon would
-    # override it with a raw PNG that macOS renders at the wrong logical size.
-    if sys.platform != "darwin":
+    # In a macOS bundle the dock icon comes from .icns automatically;
+    # calling setWindowIcon would override it with a raw PNG that macOS
+    # renders at the wrong logical size.  When running from source
+    # (PyCharm, terminal) sys.frozen is not set, so we still set the icon.
+    _in_bundle = sys.platform == "darwin" and getattr(sys, "frozen", False)
+    if not _in_bundle:
         icon_path = Path(__file__).parent / "assets" / "icon.png"
         if icon_path.exists():
             app.setWindowIcon(QIcon(str(icon_path)))

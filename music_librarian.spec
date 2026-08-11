@@ -14,6 +14,8 @@ a = Analysis(
     datas=[],
     hiddenimports=[
         "certifi",
+        "PySide6.QtMultimedia",
+        "PySide6.QtMultimediaWidgets",
         # watchdog platform backends
         "watchdog.observers",
         "watchdog.observers.fsevents",
@@ -36,8 +38,7 @@ a = Analysis(
         "PySide6.QtQuickControls2",
         "PySide6.QtPdf",
         "PySide6.QtPdfWidgets",
-        "PySide6.QtMultimedia",
-        "PySide6.QtMultimediaWidgets",
+        # QtMultimedia is used by PlayerEngine — do NOT exclude
         "PySide6.Qt3DCore",
         "PySide6.Qt3DRender",
         "PySide6.Qt3DInput",

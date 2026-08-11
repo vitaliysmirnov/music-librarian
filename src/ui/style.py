@@ -2,7 +2,9 @@
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QFontMetrics
-from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QToolTip
+from PySide6.QtWidgets import (
+    QApplication, QLabel, QSizePolicy, QStyle, QStyledItemDelegate, QToolTip,
+)
 
 ROW_HEIGHT = 20
 
@@ -58,6 +60,31 @@ class ElidedTooltipDelegate(QStyledItemDelegate):
             QToolTip.hideText()
             return False
         return super().helpEvent(event, view, option, index)
+
+class ElidedLabel(QLabel):
+    """QLabel that elides text with '…' when it doesn't fit the available width."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        self._full_text = text
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setMinimumWidth(0)
+        super().setText(self._elided())
+
+    def setText(self, text):
+        self._full_text = text
+        super().setText(self._elided())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        super().setText(self._elided())
+
+    def _elided(self):
+        if not self._full_text:
+            return self._full_text
+        fm = QFontMetrics(self.font())
+        return fm.elidedText(self._full_text, Qt.TextElideMode.ElideRight, max(0, self.width()))
+
 
 TABLE_STYLE = """
 QTableView, QTableWidget {

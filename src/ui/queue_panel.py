@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.ui.player_engine import PlayerEngine, QueueTrack
+from src.ui.style import ElidedLabel
 from src.utils.audio import AUDIO_EXTENSIONS
 
 _PANEL_STYLE = """
@@ -77,7 +78,7 @@ QPushButton:hover {
 }
 """
 
-_ITEM_H     = 24
+_ITEM_H     = 40
 _LINE_COLOR = QColor("#3875d7")
 
 
@@ -338,32 +339,54 @@ class QueuePanel(QFrame):
             item.setData(Qt.ItemDataRole.UserRole, label_text)
             item.setSizeHint(QSize(self._list.width() - 4, _ITEM_H))
             self._list.addItem(item)
-            self._list.setItemWidget(item, self._make_row(item, label_text, i == cur))
+            self._list.setItemWidget(item, self._make_row(item, track, i == cur))
 
         n = len(queue)
         total_s = sum(t.duration_ms for t in queue) // 1000
         mins, secs = divmod(total_s, 60)
         self._footer_lbl.setText(f"{n} tracks,  {mins} min {secs:02d} sec")
-        self.setFixedHeight(min(400, 50 + n * (_ITEM_H + 1) + 26 + 8))
+        self.setFixedHeight(min(500, 50 + n * (_ITEM_H + 1) + 26 + 8))
 
-    def _make_row(self, item: QListWidgetItem, text: str, is_current: bool) -> QWidget:
+    def _make_row(self, item: QListWidgetItem, track: "QueueTrack", is_current: bool) -> QWidget:
         w  = QWidget()
         hl = QHBoxLayout(w)
-        hl.setContentsMargins(14, 0, 14, 0)
+        hl.setContentsMargins(14, 3, 14, 3)
         hl.setSpacing(3)
 
-        lbl = QLabel(text)
-        lbl.setStyleSheet(
+        info = QWidget()
+        vl = QVBoxLayout(info)
+        vl.setContentsMargins(0, 0, 0, 0)
+        vl.setSpacing(0)
+
+        artist_text = track.artist or ""
+        title_text  = track.title or Path(track.path).stem
+
+        if artist_text:
+            artist_lbl = ElidedLabel(artist_text)
+            artist_lbl.setStyleSheet(
+                "font-size: 10px; font-weight: 700; color: palette(placeholderText);"
+                if is_current else
+                "font-size: 10px; color: palette(placeholderText);"
+            )
+            vl.addWidget(artist_lbl)
+
+        title_lbl = ElidedLabel(title_text)
+        title_lbl.setStyleSheet(
             "font-size: 11px; font-weight: 700;" if is_current else "font-size: 11px;"
         )
-        lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        hl.addWidget(lbl)
+        vl.addWidget(title_lbl)
+
+        if not artist_text:
+            vl.setContentsMargins(0, 4, 0, 4)
+
+        info.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        hl.addWidget(info)
 
         rm = QPushButton("✕")
         rm.setStyleSheet(_REMOVE_STYLE)
         rm.setToolTip("Remove")
         rm.clicked.connect(lambda _c, it=item: self._remove_item(it))
-        hl.addWidget(rm)
+        hl.addWidget(rm, 0, Qt.AlignmentFlag.AlignVCenter)
 
         return w
 

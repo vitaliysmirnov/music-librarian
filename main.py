@@ -52,9 +52,12 @@ def main():
     app.setApplicationDisplayName("Music Librarian")
     app.setOrganizationName("music-librarian")
 
-    icon_path = Path(__file__).parent / "assets" / "icon.png"
-    if icon_path.exists():
-        app.setWindowIcon(QIcon(str(icon_path)))
+    # macOS: dock icon comes from the bundle's .icns — setWindowIcon would
+    # override it with a raw PNG that macOS renders at the wrong logical size.
+    if sys.platform != "darwin":
+        icon_path = Path(__file__).parent / "assets" / "icon.png"
+        if icon_path.exists():
+            app.setWindowIcon(QIcon(str(icon_path)))
 
     from src.utils.logger import get_logger, QtLogHandler
     log = get_logger()

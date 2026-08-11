@@ -2,13 +2,40 @@
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QFontMetrics
-from PySide6.QtWidgets import QStyledItemDelegate, QToolTip
+from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QToolTip
 
 ROW_HEIGHT = 20
 
 
 class ElidedTooltipDelegate(QStyledItemDelegate):
-    """Shows the full cell text as a tooltip only when it is visually elided."""
+    """Character-level text elision + tooltip for table cells.
+
+    macOS QMacStyle passes text through CoreText which truncates at word
+    boundaries.  Overriding paint() pre-elides the text at character level
+    so the native style never sees an overlong string.
+    The same _MARGIN constant drives both the paint threshold and the
+    tooltip detection in helpEvent.
+    """
+
+    # Total horizontal cell margin on macOS Qt: 4px CSS padding each side
+    # + ~4px internal Qt style margin each side (empirically measured).
+    _MARGIN = 16
+
+    def paint(self, painter, option, index):
+        from PySide6.QtWidgets import QStyleOptionViewItem
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        if opt.text and opt.widget is not None:
+            cell_w = opt.widget.columnWidth(index.column())
+            if cell_w > 0:
+                fm = QFontMetrics(opt.font)
+                opt.text = fm.elidedText(
+                    opt.text, Qt.TextElideMode.ElideRight, cell_w - self._MARGIN
+                )
+        # Call style.drawControl directly — super().paint() would call
+        # initStyleOption() again internally, overwriting our pre-elided text.
+        style = opt.widget.style() if opt.widget else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
 
     def helpEvent(self, event, view, option, index):
         if event and event.type() == QEvent.Type.ToolTip:
@@ -25,12 +52,7 @@ class ElidedTooltipDelegate(QStyledItemDelegate):
             # to paint the cell — more accurate than view.fontMetrics().
             self.initStyleOption(option, index)
             fm = QFontMetrics(option.font)
-            # Qt renders table cell text with ~16px total horizontal margin on
-            # macOS (4px CSS padding each side + ~4px internal style margin
-            # each side).  SE_ItemViewItemText only accounts for the CSS part
-            # and returns ~cell_w-8, which misses the visual clip point.
-            # Empirically measured: text clips when horizontalAdvance >= cell_w-16.
-            if fm.horizontalAdvance(text) >= cell_w - 16:
+            if fm.horizontalAdvance(text) >= cell_w - self._MARGIN:
                 QToolTip.showText(event.globalPos(), text, view)
                 return True
             QToolTip.hideText()

@@ -30,8 +30,8 @@ def _fmt_ms(ms: int) -> str:
 
 
 class TracklistPopup(QDialog):
-    play_track    = Signal(list)
-    enqueue_track = Signal(list)
+    play_track    = Signal(list, dict)
+    enqueue_track = Signal(list, dict)
 
     def __init__(self, release_row: dict, db=None, parent=None):
         super().__init__(
@@ -52,6 +52,7 @@ class TracklistPopup(QDialog):
             for disc in db.get_disc_entries(release_row["folder_path"]):
                 paths += _audio_paths(disc["folder_path"])
 
+        self._release_row = release_row
         self._paths = paths
         tracks = [_read_track_tags(p) for p in paths]
 
@@ -151,7 +152,7 @@ class TracklistPopup(QDialog):
     def _on_double_click(self, item: QListWidgetItem):
         idx = self._lw.row(item)
         if 0 <= idx < len(self._paths):
-            self.play_track.emit([self._paths[idx]])
+            self.play_track.emit([self._paths[idx]], self._release_row)
 
     def _on_context_menu(self, pos):
         if self._lw.itemAt(pos) is None:
@@ -164,6 +165,6 @@ class TracklistPopup(QDialog):
         act_enqueue = menu.addAction("Add to Queue")
         chosen = menu.exec(self._lw.viewport().mapToGlobal(pos))
         if chosen == act_play:
-            self.play_track.emit(paths)
+            self.play_track.emit(paths, self._release_row)
         elif chosen == act_enqueue:
-            self.enqueue_track.emit(paths)
+            self.enqueue_track.emit(paths, self._release_row)

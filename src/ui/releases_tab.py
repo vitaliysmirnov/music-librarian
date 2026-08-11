@@ -554,8 +554,8 @@ class _ReleasesView(QWidget):
 
     play_requested            = Signal(dict)
     enqueue_requested         = Signal(dict)
-    play_track_requested      = Signal(list)
-    enqueue_track_requested   = Signal(list)
+    play_track_requested      = Signal(list, dict)
+    enqueue_track_requested   = Signal(list, dict)
     release_trashed           = Signal()
     column_visibility_changed = Signal(int, bool)  # logical_idx, hidden
 
@@ -1036,8 +1036,8 @@ class ReleasesTab(QWidget):
     release_trashed         = Signal()
     play_requested          = Signal(dict)
     enqueue_requested       = Signal(dict)
-    play_track_requested    = Signal(list)
-    enqueue_track_requested = Signal(list)
+    play_track_requested    = Signal(list, dict)
+    enqueue_track_requested = Signal(list, dict)
 
     def __init__(self, db):
         super().__init__()

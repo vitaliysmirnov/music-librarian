@@ -1,12 +1,19 @@
 import sys
 from pathlib import Path
 
-# Fix app name in the macOS menu bar when running from source (not a bundle).
+# Fix app name when running from source (not a bundle).
 # In a PyInstaller bundle the name comes from CFBundleName in Info.plist.
 if sys.platform == "darwin":
     try:
         from AppKit import NSBundle  # pyobjc-framework-Cocoa
-        NSBundle.mainBundle().infoDictionary()["CFBundleName"] = "Music Librarian"
+        _info = NSBundle.mainBundle().infoDictionary()
+        _info["CFBundleName"] = "Music Librarian"        # menu bar
+        _info["CFBundleDisplayName"] = "Music Librarian" # Dock / Finder
+    except Exception:
+        pass
+    try:
+        import ctypes
+        ctypes.cdll.LoadLibrary(None).setprogname(b"Music Librarian")  # ps / Activity Monitor
     except Exception:
         pass
 

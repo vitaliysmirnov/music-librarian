@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel,
     QPushButton, QTableView, QHeaderView, QAbstractItemView, QMenu,
     QApplication, QStyledItemDelegate, QStyleOptionViewItem, QStyle, QMessageBox,
-    QSplitter, QStackedWidget,
+    QInputDialog, QSplitter, QStackedWidget,
 )
 
 from src.scanner.mask import DEFAULT_MASK, KNOWN_TOKENS, get_custom_tokens
@@ -20,6 +20,7 @@ from src.utils import open_path
 from src.utils.audio import AUDIO_EXTENSIONS
 from src.ui.edit_release_dialog import EditReleaseDialog
 from src.ui.liked_view import LikedTracksView
+from src.ui.playlist_view import PlaylistView
 from src.ui.tracklist_popup import TracklistPopup
 from src.ui.sidebar_panel import SidebarPanel
 from src.ui.style import ROW_HEIGHT, TABLE_STYLE, SEARCH_STYLE
@@ -557,6 +558,7 @@ class _ReleasesView(QWidget):
     release_trashed           = Signal()
     column_visibility_changed = Signal(int, bool)  # logical_idx, hidden
     liked_changed             = Signal()
+    playlist_track_added      = Signal(int)  # playlist_id
 
     def __init__(self, db, query_fn, *,
                  sortable: bool = True,
@@ -709,6 +711,7 @@ class _ReleasesView(QWidget):
         self._tracklist_popup.play_track.connect(self.play_track_requested)
         self._tracklist_popup.enqueue_track.connect(self.enqueue_track_requested)
         self._tracklist_popup.liked_changed.connect(self.liked_changed)
+        self._tracklist_popup.playlist_track_added.connect(self.playlist_track_added)
         self._tracklist_popup.finished.connect(lambda: setattr(self, "_tracklist_popup", None))
         self._tracklist_popup.show()
 
@@ -1051,7 +1054,8 @@ class ReleasesTab(QWidget):
     play_track_requested    = Signal(list, dict)
     enqueue_track_requested = Signal(list, dict)
     liked_changed           = Signal()
-    go_to_release           = Signal(str)  # folder_path
+    go_to_release           = Signal(str)   # folder_path
+    playlist_track_added    = Signal(int)   # playlist_id
 
     def __init__(self, db):
         super().__init__()
@@ -1118,20 +1122,30 @@ class ReleasesTab(QWidget):
         self._releases_view.enqueue_track_requested.connect(self.enqueue_track_requested)
         self._releases_view.release_trashed.connect(self.release_trashed)
         self._releases_view.liked_changed.connect(self._on_liked_changed)
+        self._releases_view.playlist_track_added.connect(self._on_popup_playlist_track_added)
 
         self._liked_view = LikedTracksView(self._db)
         self._liked_view.play_track_requested.connect(self.play_track_requested)
         self._liked_view.enqueue_track_requested.connect(self.enqueue_track_requested)
         self._liked_view.track_unliked.connect(self._on_liked_changed)
         self._liked_view.go_to_release.connect(self.navigate_to_release)
+        self._liked_view.playlist_track_added.connect(self._on_popup_playlist_track_added)
 
-        self._stack.addWidget(self._releases_view)             # 0  releases
-        self._stack.addWidget(self._liked_view)                # 1
-        self._stack.addWidget(_make_stub("All Playlists"))     # 2
+        self._playlist_view = PlaylistView(self._db)
+        self._playlist_view.play_track_requested.connect(self.play_track_requested)
+        self._playlist_view.enqueue_track_requested.connect(self.enqueue_track_requested)
+        self._playlist_view.liked_changed.connect(self._on_liked_changed)
+        self._playlist_view.go_to_release.connect(self.navigate_to_release)
+
+        self._stack.addWidget(self._releases_view)   # 0
+        self._stack.addWidget(self._liked_view)      # 1
+        self._stack.addWidget(self._playlist_view)   # 2
 
         self._sidebar.nav_changed.connect(self._on_nav)
+        self._sidebar.add_playlist_requested.connect(self._on_add_playlist)
         self._sidebar.set_current("releases")
         self._stack.setCurrentIndex(_NAV_PAGE["releases"])
+        self._refresh_playlists()
 
     # ── Sidebar navigation ────────────────────────────────────────────────────
 
@@ -1144,7 +1158,34 @@ class ReleasesTab(QWidget):
         self._liked_view.refresh()
         self.liked_changed.emit()
 
+    def _on_popup_playlist_track_added(self, playlist_id: int):
+        if (self._stack.currentIndex() == 2 and
+                self._playlist_view._playlist_id == playlist_id):
+            self._playlist_view.refresh()
+        self.playlist_track_added.emit(playlist_id)
+
+    def _on_add_playlist(self):
+        existing = self._db.get_playlists()
+        if len(existing) >= 99:
+            QMessageBox.information(self, "Playlists", "Maximum 99 playlists reached.")
+            return
+        name, ok = QInputDialog.getText(self, "New Playlist", "Playlist name:")
+        if not ok or not name.strip():
+            return
+        self._db.create_playlist(name.strip())
+        self._refresh_playlists()
+
+    def _refresh_playlists(self):
+        self._sidebar.refresh_playlists(self._db.get_playlists())
+
     def _on_nav(self, key: str):
+        if key.startswith("playlist:"):
+            pid = int(key.split(":")[1])
+            pl = self._db.get_playlist(pid)
+            if pl:
+                self._playlist_view.load(pid, pl["name"])
+            self._stack.setCurrentIndex(2)
+            return
         self._stack.setCurrentIndex(_NAV_PAGE.get(key, _NAV_PAGE["releases"]))
         if key == "releases":
             self._releases_view.invalidate_header_cache()
@@ -1182,3 +1223,6 @@ class ReleasesTab(QWidget):
 
     def invalidate_header_state(self):
         self._releases_view.invalidate_header_state()
+
+    def refresh_playlists(self):
+        self._refresh_playlists()

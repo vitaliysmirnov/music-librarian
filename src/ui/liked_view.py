@@ -3,13 +3,14 @@
 from pathlib import Path
 
 from PySide6.QtCore import (
-    Qt, QAbstractTableModel, QModelIndex, QMimeData, QPoint,
+    Qt, QAbstractTableModel, QEvent, QModelIndex, QMimeData, QPoint,
     QSortFilterProxyModel, QUrl, Signal,
 )
-from PySide6.QtGui import QDrag, QKeySequence, QShortcut
+from PySide6.QtGui import QColor, QDrag, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QHBoxLayout, QHeaderView,
-    QLabel, QMenu, QPushButton, QTableView, QVBoxLayout, QWidget,
+    QLabel, QMenu, QPushButton, QStyle, QStyledItemDelegate,
+    QStyleOptionViewItem, QTableView, QVBoxLayout, QWidget,
 )
 
 from src.ui.style import ROW_HEIGHT, TABLE_STYLE
@@ -21,9 +22,10 @@ COL_TITLE  = 2
 COL_ALBUM  = 3
 COL_DATE   = 4
 COL_DUR    = 5
+COL_LIKE   = 6
 
-_HEADERS = ["#", "Artist", "Title", "Album", "Date Liked", "Duration"]
-_WIDTHS  = [32, 160, 200, 160, 100, 60]
+_HEADERS = ["#", "Artist", "Title", "Album", "Date Liked", "Duration", "♥"]
+_WIDTHS  = [32, 160, 200, 160, 100, 60, 28]
 
 
 class LikedTracksModel(QAbstractTableModel):
@@ -59,6 +61,7 @@ class LikedTracksModel(QAbstractTableModel):
             if col == COL_ALBUM:  return row.get("album", "")
             if col == COL_DATE:   return (row.get("date_liked") or "")[:10]
             if col == COL_DUR:    return fmt_ms(row.get("duration_ms", 0))
+            if col == COL_LIKE:   return ""
         if role == Qt.UserRole:
             return row
         return None
@@ -75,6 +78,8 @@ class _LikedSortProxy(QSortFilterProxyModel):
         src = self.sourceModel()
         if col == COL_NUM:
             return left.row() < right.row()
+        if col == COL_LIKE:
+            return False
         if col == COL_DUR:
             lms = (src.get_row(left.row())  or {}).get("duration_ms", 0)
             rms = (src.get_row(right.row()) or {}).get("duration_ms", 0)
@@ -82,6 +87,40 @@ class _LikedSortProxy(QSortFilterProxyModel):
         lv = (src.data(left,  Qt.DisplayRole) or "").lower()
         rv = (src.data(right, Qt.DisplayRole) or "").lower()
         return lv < rv
+
+
+class _LikeDelegate(QStyledItemDelegate):
+    """Renders ♥/♡ in COL_LIKE and fires a callback on click."""
+
+    def __init__(self, like_col: int, toggle_cb, parent=None):
+        super().__init__(parent)
+        self._like_col  = like_col
+        self._toggle_cb = toggle_cb
+
+    def paint(self, painter: QPainter, option, index: QModelIndex):
+        if index.column() != self._like_col:
+            super().paint(painter, option, index)
+            return
+        # Draw standard cell background (selection, hover, alternating).
+        super().paint(painter, option, index)
+        row      = index.data(Qt.UserRole)
+        is_liked = bool((row or {}).get("is_liked", False))
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        color    = (QColor(255, 255, 255) if selected
+                    else QColor("#e0405a") if is_liked
+                    else option.palette.placeholderText().color())
+        painter.save()
+        painter.setPen(color)
+        painter.drawText(option.rect, Qt.AlignCenter, "♥" if is_liked else "♡")
+        painter.restore()
+
+    def editorEvent(self, event, model, option, index):
+        if (index.column() == self._like_col
+                and event.type() == QEvent.Type.MouseButtonRelease):
+            if self._toggle_cb:
+                self._toggle_cb(index)
+            return True
+        return super().editorEvent(event, model, option, index)
 
 
 class _LikedTableView(QTableView):
@@ -100,7 +139,18 @@ class _LikedTableView(QTableView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            idx = self.indexAt(event.pos())
+            if idx.isValid() and idx.column() == COL_LIKE:
+                self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+            else:
+                self.viewport().unsetCursor()
         if self._drag_start is None or not (event.buttons() & Qt.MouseButton.LeftButton):
+            super().mouseMoveEvent(event)
+            return
+        # Don't start a drag from the like column
+        start_idx = self.indexAt(self._drag_start)
+        if start_idx.isValid() and start_idx.column() == COL_LIKE:
             super().mouseMoveEvent(event)
             return
         if (event.pos() - self._drag_start).manhattanLength() < QApplication.startDragDistance():
@@ -147,7 +197,8 @@ class LikedTracksView(QWidget):
     play_track_requested    = Signal(list, dict)
     enqueue_track_requested = Signal(list, dict)
     track_unliked           = Signal()
-    go_to_release           = Signal(str)  # folder_path
+    go_to_release           = Signal(str)   # folder_path
+    playlist_track_added    = Signal(int)   # playlist_id
 
     def __init__(self, db, parent=None):
         super().__init__(parent)
@@ -192,6 +243,10 @@ class LikedTracksView(QWidget):
                 hdr.setSectionResizeMode(col, QHeaderView.Fixed)
                 hdr.resizeSection(col, w)
 
+        self._table.setItemDelegateForColumn(
+            COL_LIKE, _LikeDelegate(COL_LIKE, self._toggle_like_at, self._table)
+        )
+
         # Default sort: by date liked, newest first
         self._proxy.sort(COL_DATE, Qt.DescendingOrder)
         hdr.setSortIndicator(COL_DATE, Qt.DescendingOrder)
@@ -213,18 +268,24 @@ class LikedTracksView(QWidget):
         self._play_all_btn.setEnabled(False)
         self._play_all_btn.clicked.connect(self._play_all)
         bb.addWidget(self._play_all_btn)
-
-        self._count_label = QLabel("")
-        self._count_label.setStyleSheet("font-size: 11px;")
-        bb.addWidget(self._count_label)
         bb.addStretch()
+
+        self._stats_label = QLabel("")
+        self._stats_label.setStyleSheet(
+            "font-size: 11px; font-weight: 600; color: palette(placeholderText);"
+        )
+        bb.addWidget(self._stats_label)
         layout.addWidget(bb_widget)
 
     def refresh(self) -> None:
-        rows = self._db.get_liked_tracks()
+        rows = [dict(r) | {"is_liked": True} for r in self._db.get_liked_tracks()]
         self._model.load(rows)
         n = len(rows)
-        self._count_label.setText(f"Liked: {n}")
+        total_s = sum(r.get("duration_ms", 0) for r in rows) // 1000
+        mins, secs = divmod(total_s, 60)
+        self._stats_label.setText(
+            f"{n} tracks,  {mins} min {secs:02d} sec" if n else ""
+        )
         self._play_all_btn.setEnabled(n > 0)
 
     # ── Selection ──────────────────────────────────────────────────────────
@@ -293,6 +354,14 @@ class LikedTracksView(QWidget):
         self.refresh()
         self.track_unliked.emit()
 
+    def _toggle_like_at(self, proxy_index: QModelIndex):
+        src_row = self._proxy.mapToSource(proxy_index).row()
+        row = self._model.get_row(src_row)
+        if row:
+            self._db.unlike_track(row["path"])
+            self.refresh()
+            self.track_unliked.emit()
+
     def _show_context_menu(self, pos):
         proxy_index = self._table.indexAt(pos)
         if not proxy_index.isValid():
@@ -311,6 +380,16 @@ class LikedTracksView(QWidget):
         act_enqueue    = menu.addAction("Add to Queue")
         act_play.setEnabled(available)
         act_enqueue.setEnabled(available)
+
+        pl_actions: dict = {}
+        playlists = self._db.get_playlists() if self._db is not None else []
+        if playlists:
+            menu.addSeparator()
+            pl_menu = menu.addMenu("Add to Playlist")
+            for pl in playlists:
+                act = pl_menu.addAction(pl["name"])
+                pl_actions[act] = pl["id"]
+
         menu.addSeparator()
         act_go_release = menu.addAction("Go to Release")
         act_go_release.setEnabled(bool(row.get("folder_path")))
@@ -321,6 +400,14 @@ class LikedTracksView(QWidget):
             self._play_selected()
         elif chosen == act_enqueue:
             self._enqueue_selected()
+        elif chosen in pl_actions:
+            pid = pl_actions[chosen]
+            for r in self._selected_rows():
+                self._db.add_track_to_playlist(
+                    pid, r["path"], r.get("artist", ""), r.get("title", ""),
+                    r.get("album", ""), r.get("folder_path", ""), r.get("duration_ms", 0),
+                )
+            self.playlist_track_added.emit(pid)
         elif chosen == act_go_release:
             self.go_to_release.emit(row["folder_path"])
         elif chosen == act_unlike:

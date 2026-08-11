@@ -27,9 +27,10 @@ def _trunc(s: str, n: int) -> str:
 
 
 class TracklistPopup(QDialog):
-    play_track    = Signal(list, dict)
-    enqueue_track = Signal(list, dict)
-    liked_changed = Signal()
+    play_track           = Signal(list, dict)
+    enqueue_track        = Signal(list, dict)
+    liked_changed        = Signal()
+    playlist_track_added = Signal(int)  # playlist_id
 
     def __init__(self, release_row: dict, db=None, parent=None):
         super().__init__(
@@ -230,8 +231,32 @@ class TracklistPopup(QDialog):
         menu = QMenu(self)
         act_play    = menu.addAction("Play Now")
         act_enqueue = menu.addAction("Add to Queue")
+
+        pl_actions: dict = {}
+        if self._db is not None:
+            playlists = self._db.get_playlists()
+            if playlists:
+                menu.addSeparator()
+                pl_menu = menu.addMenu("Add to Playlist")
+                for pl in playlists:
+                    act = pl_menu.addAction(pl["name"])
+                    pl_actions[act] = pl["id"]
+
         chosen = menu.exec(self._lw.viewport().mapToGlobal(pos))
         if chosen == act_play:
             self.play_track.emit(paths, self._release_row)
         elif chosen == act_enqueue:
             self.enqueue_track.emit(paths, self._release_row)
+        elif chosen in pl_actions:
+            pid = pl_actions[chosen]
+            for path in paths:
+                try:
+                    idx = self._paths.index(path)
+                    artist, title, ms = self._tracks[idx]
+                except (ValueError, IndexError):
+                    continue
+                self._db.add_track_to_playlist(
+                    pid, path, artist, title,
+                    self._album, self._folder_path, ms,
+                )
+            self.playlist_track_added.emit(pid)

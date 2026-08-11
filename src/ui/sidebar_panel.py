@@ -1,15 +1,13 @@
 from PySide6.QtCore import Qt, QPointF, QRectF, QSize, Signal
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QGraphicsOpacityEffect, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 _ICON_PX = 14   # logical icon size (points)
 
 _NAV_ITEMS = [
-    (None,        "Library",        "section"),
-    ("releases",  "Releases",       None),
-    ("liked",     "Liked",          None),
-    (None,        "Playlists",      "section"),
-    ("playlists", "All Playlists",  None),
+    (None,       "Library",  "section"),
+    ("releases", "Releases", None),
+    ("liked",    "Liked",    None),
 ]
 
 _SIDEBAR_STYLE = """
@@ -30,19 +28,30 @@ SidebarPanel QPushButton:checked {
     background: #3875d7;
     color: white;
 }
+SidebarPanel QPushButton#add_playlist_btn {
+    text-align: center;
+    padding: 0;
+    margin: 0 0 0 0;
+    font-size: 16px;
+    font-weight: 400;
+    min-width: 22px;
+    max-width: 22px;
+    min-height: 22px;
+    max-height: 22px;
+    border-radius: 4px;
+}
 """
 
 _SECTION_STYLE = (
     "font-size: 10px; font-weight: 700; "
     "color: palette(placeholderText); "
-    "padding: 10px 14px 2px 14px;"
+    "padding: 0;"
 )
 
 
 # ── Icon drawing ───────────────────────────────────────────────────────────────
 
 def _make_pix(draw_fn, px: int, color: QColor) -> QPixmap:
-    """Render draw_fn onto a hi-DPI px×px pixmap."""
     pix = QPixmap(px * 2, px * 2)
     pix.setDevicePixelRatio(2.0)
     pix.fill(Qt.GlobalColor.transparent)
@@ -51,7 +60,6 @@ def _make_pix(draw_fn, px: int, color: QColor) -> QPixmap:
     draw_fn(p, float(px), color)
     p.end()
     return pix
-
 
 
 def _draw_disc(p: QPainter, s: float, c: QColor):
@@ -71,26 +79,10 @@ def _draw_heart(p: QPainter, s: float, c: QColor):
     p.setPen(Qt.PenStyle.NoPen)
     path = QPainterPath()
     path.moveTo(s * 0.50, s * 0.88)
-    path.cubicTo(
-        QPointF(s * 0.15, s * 0.65),
-        QPointF(s * 0.00, s * 0.42),
-        QPointF(s * 0.13, s * 0.25),
-    )
-    path.cubicTo(
-        QPointF(s * 0.23, s * 0.08),
-        QPointF(s * 0.44, s * 0.10),
-        QPointF(s * 0.50, s * 0.30),
-    )
-    path.cubicTo(
-        QPointF(s * 0.56, s * 0.10),
-        QPointF(s * 0.77, s * 0.08),
-        QPointF(s * 0.87, s * 0.25),
-    )
-    path.cubicTo(
-        QPointF(s * 1.00, s * 0.42),
-        QPointF(s * 0.85, s * 0.65),
-        QPointF(s * 0.50, s * 0.88),
-    )
+    path.cubicTo(QPointF(s * 0.15, s * 0.65), QPointF(s * 0.00, s * 0.42), QPointF(s * 0.13, s * 0.25))
+    path.cubicTo(QPointF(s * 0.23, s * 0.08), QPointF(s * 0.44, s * 0.10), QPointF(s * 0.50, s * 0.30))
+    path.cubicTo(QPointF(s * 0.56, s * 0.10), QPointF(s * 0.77, s * 0.08), QPointF(s * 0.87, s * 0.25))
+    path.cubicTo(QPointF(s * 1.00, s * 0.42), QPointF(s * 0.85, s * 0.65), QPointF(s * 0.50, s * 0.88))
     path.closeSubpath()
     p.drawPath(path)
 
@@ -105,14 +97,13 @@ def _draw_list(p: QPainter, s: float, c: QColor):
 
 
 _ICON_DRAW = {
-    "releases":  _draw_disc,
-    "liked":     _draw_heart,
-    "playlists": _draw_list,
+    "releases": _draw_disc,
+    "liked":    _draw_heart,
+    "playlist": _draw_list,
 }
 
 
 def _icon_color_off() -> QColor:
-    """Mid-gray that reads in both light and dark themes."""
     is_dark = QApplication.palette().window().color().lightness() < 128
     return QColor(185, 185, 193) if is_dark else QColor(105, 105, 115)
 
@@ -120,11 +111,13 @@ def _icon_color_off() -> QColor:
 # ── Sidebar widget ─────────────────────────────────────────────────────────────
 
 class SidebarPanel(QWidget):
-    nav_changed = Signal(str)
+    nav_changed             = Signal(str)
+    add_playlist_requested  = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._buttons: dict[str, QPushButton] = {}
+        self._buttons: dict[str, QPushButton]  = {}
+        self._playlist_buttons: dict[int, QPushButton] = {}
         self._pix_off: dict[str, QPixmap] = {}
         self._pix_on:  dict[str, QPixmap] = {}
         self._current: str | None = None
@@ -151,9 +144,10 @@ class SidebarPanel(QWidget):
             if kind == "section":
                 sec = QLabel(label.upper())
                 sec.setStyleSheet(_SECTION_STYLE)
-                _fade = QGraphicsOpacityEffect(sec)
-                _fade.setOpacity(0.45)
-                sec.setGraphicsEffect(_fade)
+                sec.setContentsMargins(14, 10, 14, 2)
+                fx = QGraphicsOpacityEffect(sec)
+                fx.setOpacity(0.45)
+                sec.setGraphicsEffect(fx)
                 layout.addWidget(sec)
             else:
                 btn = QPushButton(label)
@@ -166,21 +160,93 @@ class SidebarPanel(QWidget):
                 layout.addWidget(btn)
                 self._buttons[key] = btn
 
+        # ── Playlists section header with "+" ─────────────────────────────
+        pl_hdr = QWidget()
+        pl_hdr_l = QHBoxLayout(pl_hdr)
+        pl_hdr_l.setContentsMargins(14, 10, 8, 2)
+        pl_hdr_l.setSpacing(4)
+
+        pl_lbl = QLabel("PLAYLISTS")
+        pl_lbl.setStyleSheet(_SECTION_STYLE)
+        fx2 = QGraphicsOpacityEffect(pl_lbl)
+        fx2.setOpacity(0.45)
+        pl_lbl.setGraphicsEffect(fx2)
+        pl_hdr_l.addWidget(pl_lbl)
+        pl_hdr_l.addStretch()
+
+        add_btn = QPushButton("+")
+        add_btn.setObjectName("add_playlist_btn")
+        add_btn.setToolTip("New playlist")
+        add_btn.setFlat(True)
+        add_btn.clicked.connect(self.add_playlist_requested)
+        pl_hdr_l.addWidget(add_btn)
+        layout.addWidget(pl_hdr)
+
+        # ── Playlist buttons container ────────────────────────────────────
+        self._playlists_container = QWidget()
+        self._playlists_layout = QVBoxLayout(self._playlists_container)
+        self._playlists_layout.setContentsMargins(0, 0, 0, 0)
+        self._playlists_layout.setSpacing(1)
+        layout.addWidget(self._playlists_container)
+
         layout.addStretch()
+
+    def refresh_playlists(self, playlists: list) -> None:
+        # Remove old playlist buttons
+        for btn in self._playlist_buttons.values():
+            btn.setParent(None)
+            btn.deleteLater()
+        self._playlist_buttons.clear()
+
+        for pl in playlists:
+            pid  = pl["id"]
+            name = pl["name"]
+            btn  = QPushButton(name)
+            btn.setFlat(True)
+            btn.setCheckable(True)
+            btn.setIcon(QIcon(self._pix_off["playlist"]))
+            btn.setIconSize(QSize(_ICON_PX, _ICON_PX))
+            btn.clicked.connect(lambda _c, k=f"playlist:{pid}": self._on_click(k))
+            self._playlists_layout.addWidget(btn)
+            self._playlist_buttons[pid] = btn
+
+        # Restore checked state
+        if self._current and self._current.startswith("playlist:"):
+            pid = int(self._current.split(":")[1])
+            if pid in self._playlist_buttons:
+                self._playlist_buttons[pid].setChecked(True)
+                self._playlist_buttons[pid].setIcon(QIcon(self._pix_on["playlist"]))
 
     def _on_click(self, key: str):
         self.set_current(key)
         self.nav_changed.emit(key)
 
     def set_current(self, key: str):
-        if self._current and self._current in self._buttons:
-            btn = self._buttons[self._current]
-            btn.setChecked(False)
-            if self._current in self._pix_off:
-                btn.setIcon(QIcon(self._pix_off[self._current]))
+        # Deselect previous
+        if self._current:
+            if self._current in self._buttons:
+                btn = self._buttons[self._current]
+                btn.setChecked(False)
+                icon_key = self._current
+                if icon_key in self._pix_off:
+                    btn.setIcon(QIcon(self._pix_off[icon_key]))
+            elif self._current.startswith("playlist:"):
+                pid = int(self._current.split(":")[1])
+                if pid in self._playlist_buttons:
+                    self._playlist_buttons[pid].setChecked(False)
+                    self._playlist_buttons[pid].setIcon(QIcon(self._pix_off["playlist"]))
+
         self._current = key
+
+        # Select new
         if key in self._buttons:
             btn = self._buttons[key]
             btn.setChecked(True)
             if key in self._pix_on:
                 btn.setIcon(QIcon(self._pix_on[key]))
+        elif key.startswith("playlist:"):
+            pid = int(key.split(":")[1])
+            if pid in self._playlist_buttons:
+                btn = self._playlist_buttons[pid]
+                btn.setChecked(True)
+                btn.setIcon(QIcon(self._pix_on["playlist"]))

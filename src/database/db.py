@@ -65,6 +65,26 @@ CREATE TABLE IF NOT EXISTS liked_tracks (
     duration_ms INTEGER NOT NULL DEFAULT 0,
     date_liked  TEXT    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS playlists (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT    NOT NULL,
+    date_created TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS playlist_tracks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    playlist_id INTEGER NOT NULL,
+    path        TEXT    NOT NULL,
+    artist      TEXT    NOT NULL DEFAULT '',
+    title       TEXT    NOT NULL DEFAULT '',
+    album       TEXT    NOT NULL DEFAULT '',
+    folder_path TEXT    NOT NULL DEFAULT '',
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    date_added  TEXT    NOT NULL,
+    position    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_playlist_tracks_pid ON playlist_tracks(playlist_id, position);
 """
 
 
@@ -472,3 +492,81 @@ class Database:
                 """SELECT path, artist, title, album, folder_path, duration_ms, date_liked
                    FROM liked_tracks ORDER BY date_liked DESC"""
             ).fetchall()
+
+    # ── Playlists ─────────────────────────────────────────────────────────────
+
+    def create_playlist(self, name: str) -> int:
+        with self.conn() as c:
+            return c.execute(
+                "INSERT INTO playlists (name, date_created) VALUES (?, ?)",
+                (name, datetime.now().isoformat(timespec="seconds")),
+            ).lastrowid
+
+    def get_playlists(self) -> list:
+        with self.conn() as c:
+            return c.execute(
+                "SELECT id, name, date_created FROM playlists ORDER BY date_created"
+            ).fetchall()
+
+    def get_playlist(self, playlist_id: int) -> dict | None:
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT id, name, date_created FROM playlists WHERE id = ?",
+                (playlist_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def rename_playlist(self, playlist_id: int, name: str) -> None:
+        with self.conn() as c:
+            c.execute("UPDATE playlists SET name = ? WHERE id = ?", (name, playlist_id))
+
+    def delete_playlist(self, playlist_id: int) -> None:
+        with self.conn() as c:
+            c.execute("DELETE FROM playlist_tracks WHERE playlist_id = ?", (playlist_id,))
+            c.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,))
+
+    def add_track_to_playlist(self, playlist_id: int, path: str, artist: str,
+                               title: str, album: str, folder_path: str,
+                               duration_ms: int) -> bool:
+        with self.conn() as c:
+            if c.execute(
+                "SELECT 1 FROM playlist_tracks WHERE playlist_id = ? AND path = ?",
+                (playlist_id, path),
+            ).fetchone():
+                return False
+            pos = c.execute(
+                "SELECT COALESCE(MAX(position) + 1, 0) FROM playlist_tracks WHERE playlist_id = ?",
+                (playlist_id,),
+            ).fetchone()[0]
+            c.execute(
+                """INSERT INTO playlist_tracks
+                   (playlist_id, path, artist, title, album, folder_path,
+                    duration_ms, date_added, position)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (playlist_id, path, artist, title, album, folder_path,
+                 duration_ms, datetime.now().isoformat(timespec="seconds"), pos),
+            )
+            return True
+
+    def remove_track_from_playlist(self, playlist_id: int, path: str) -> None:
+        with self.conn() as c:
+            c.execute(
+                "DELETE FROM playlist_tracks WHERE playlist_id = ? AND path = ?",
+                (playlist_id, path),
+            )
+
+    def get_playlist_tracks(self, playlist_id: int) -> list:
+        with self.conn() as c:
+            return c.execute(
+                """SELECT path, artist, title, album, folder_path, duration_ms, date_added
+                   FROM playlist_tracks WHERE playlist_id = ? ORDER BY position""",
+                (playlist_id,),
+            ).fetchall()
+
+    def reorder_playlist_tracks(self, playlist_id: int, ordered_paths: list) -> None:
+        with self.conn() as c:
+            for pos, path in enumerate(ordered_paths):
+                c.execute(
+                    "UPDATE playlist_tracks SET position = ? WHERE playlist_id = ? AND path = ?",
+                    (pos, playlist_id, path),
+                )

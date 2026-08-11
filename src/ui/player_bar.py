@@ -45,7 +45,7 @@ class _LinkLabel(QLabel):
                 self.unsetCursor()
 
 
-_SIDE_W    = 130   # fixed width of transport block and right block
+_SIDE_W    = 160   # fixed width of transport block and right block
 _GROUP_MAX = 780   # controls group never grows wider than this
 
 # ── Independent vertical positions (centre-y from bar top, px) ──────────
@@ -175,6 +175,19 @@ PlayerBar QPushButton#btn_queue {
 }
 PlayerBar QPushButton#btn_queue:hover   { background: rgba(128,128,128,45); color: palette(buttonText); }
 PlayerBar QPushButton#btn_queue:checked { color: #3875d7; }
+
+/* ── Shuffle button ── */
+PlayerBar QPushButton#btn_shuffle {
+    border: none;
+    background: transparent;
+    color: palette(placeholderText);
+    font-size: 13px;
+    padding: 2px 4px;
+    border-radius: 5px;
+}
+PlayerBar QPushButton#btn_shuffle:hover:!disabled   { background: rgba(128,128,128,45); color: palette(buttonText); }
+PlayerBar QPushButton#btn_shuffle:pressed:!disabled { background: rgba(128,128,128,75); }
+PlayerBar QPushButton#btn_shuffle:disabled          { color: palette(mid); }
 """
 
 
@@ -253,6 +266,13 @@ class PlayerBar(QWidget):
         self._btn_play.clicked.connect(self._engine.play_pause)
         self._btn_next.clicked.connect(self._engine.next)
 
+        self._btn_shuffle = QPushButton("⇄")
+        self._btn_shuffle.setObjectName("btn_shuffle")
+        self._btn_shuffle.setToolTip("Shuffle remaining queue")
+        self._btn_shuffle.setFixedSize(28, 28)
+        self._btn_shuffle.setEnabled(False)
+        self._btn_shuffle.clicked.connect(self._engine.shuffle_queue)
+
         self._btn_like = QPushButton("♡")
         self._btn_like.setObjectName("btn_like")
         self._btn_like.setToolTip("Like / Unlike")
@@ -271,6 +291,8 @@ class PlayerBar(QWidget):
         tl.addWidget(self._btn_prev)
         tl.addWidget(self._btn_play)
         tl.addWidget(self._btn_next)
+        tl.addSpacing(4)
+        tl.addWidget(self._btn_shuffle)
 
         # ── Progress block ────────────────────────────────────────────────
         self._elapsed_lbl = QLabel("0:00")
@@ -587,5 +609,6 @@ class PlayerBar(QWidget):
             self._engine.seek(int(self._progress.value() / 1000 * self._duration_ms))
 
     def _update_enabled(self, enabled: bool):
-        for w in (self._btn_prev, self._btn_play, self._btn_next, self._progress, self._btn_like):
+        for w in (self._btn_prev, self._btn_play, self._btn_next,
+                  self._progress, self._btn_like, self._btn_shuffle):
             w.setEnabled(enabled)

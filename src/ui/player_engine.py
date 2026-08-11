@@ -1,4 +1,5 @@
 import json
+import random
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -212,6 +213,16 @@ class PlayerEngine(QObject):
             self._track_idx -= 1
         elif to_idx <= self._track_idx < from_idx:
             self._track_idx += 1
+        self.queue_changed.emit()
+
+    def shuffle_queue(self):
+        """Randomly reorder all tracks after the current one."""
+        cur = self._track_idx
+        if cur + 1 >= len(self._queue):
+            return
+        tail = self._queue[cur + 1:]
+        random.shuffle(tail)
+        self._queue[cur + 1:] = tail
         self.queue_changed.emit()
 
     def play_pause(self):

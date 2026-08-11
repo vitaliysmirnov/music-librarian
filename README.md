@@ -17,9 +17,10 @@ A desktop music library manager for collections organised as folders on disk. Bu
 - **Drive awareness** — detects external drive connects/disconnects and marks releases as available/unavailable accordingly
 - **Built-in player** — plays audio files via Qt Multimedia; supports queue reordering, drag-to-enqueue from the table, and queue persistence across restarts
 - **Tracklist popup** — shows all tracks in a release with artist, title and duration; play, enqueue, or like individual tracks; drag tracks to the queue or onto a playlist button
-- **Liked Tracks** — like/unlike individual tracks from the tracklist popup or the player bar; dedicated Liked view with sortable table, Play All, drag-to-queue, and Go to Release
-- **Playlists** — create and delete playlists from the sidebar; add tracks via drag-and-drop onto a playlist button or from a tracklist popup context menu; playlist view with sortable table, drag-reorder, Play All, like column, and Go to Release
-- **Go to Release** — navigate from the player bar, queue panel, Liked view, or playlist view directly to the playing track's release in the library; multi-disc containers auto-expand
+- **Liked Tracks** — like/unlike individual tracks from the tracklist popup or the player bar; dedicated Liked view with sortable columns (Track, Release, Cat. No., Date Liked, Duration), Play All, drag-to-queue, and Go to Release
+- **Playlists** — create, delete, and drag-to-reorder playlists in the sidebar; add tracks via drag-and-drop onto a playlist button or from a tracklist popup context menu; playlist view with sortable columns (Track, Release, Cat. No., Date Added, Duration), drag-reorder, Play All, like column, and Go to Release
+- **Go to Release** — navigate from the player bar, queue panel, Liked view, or playlist view directly to the playing track's release in the library; for tracks added from outside the library (e.g. Finder drag) opens the folder in Finder instead; multi-disc containers auto-expand
+- **Truncated-text tooltips** — hovering over any clipped cell in the Releases, Liked, or playlist tables shows the full text after the standard tooltip delay
 - **External player support** — optionally hand off playback to any configured app (e.g. foobar2000, FLAC Player)
 - **Release editing** — edit artist, title and other fields; renames the folder on disk automatically
 - **System tray** — runs in background with a tray icon; main window can be hidden
@@ -182,8 +183,9 @@ src/
 │   ├── sources_tab.py     Add/remove/scan source directories
 │   ├── settings_tab.py    App settings (scan mode, mask, theme, log)
 │   ├── sidebar_panel.py   Left-column navigation; scrollable playlist list
-│   │                      with drag-drop targets and delete context menu
-│   ├── style.py           Shared QSS constants
+│   │                      with drag-reorder, drop targets, and delete context menu
+│   ├── style.py           Shared QSS constants; ElidedTooltipDelegate —
+│   │                      character-level elision + tooltip for table cells
 │   └── theme.py           Light / dark / system theme switching
 ├── utils/
 │   ├── __init__.py        Shared helpers: fmt_ms(), open_path()
@@ -225,7 +227,7 @@ A **liked_track** stores per-file metadata at the time of liking (album is read 
 | `duration_ms` | Track duration in milliseconds |
 | `date_liked` | ISO timestamp |
 
-**Playlists** are stored in two tables: `playlists` (id, name, date_created) and `playlist_tracks` (playlist_id, path, artist, title, album, folder_path, duration_ms, position).
+**Playlists** are stored in two tables: `playlists` (id, name, date_created, position) and `playlist_tracks` (playlist_id, path, artist, title, album, folder_path, duration_ms, position). The `position` column on `playlists` preserves sidebar drag-reorder order.
 
 ---
 
@@ -246,6 +248,10 @@ macOS HFS+/APFS delivers paths in NFD form via watchdog while Python's `os.listd
 ### Sort proxy
 
 `_MultiSortProxy` uses a custom `lessThan` with a fixed tiebreaker chain: primary column → artist → year_recorded → title → disc_number. Blank values always sort to the end. Numeric strings sort numerically. Multi-disc containers (disc_number = −1) always sort before their disc children.
+
+### Text elision in table cells
+
+`ElidedTooltipDelegate` (in `style.py`) is set as the default delegate on all three table views. Its `paint()` method calls `QFontMetrics.elidedText()` and passes the pre-elided string directly to `style.drawControl(CE_ItemViewItem)`, bypassing `QStyledItemDelegate.paint()` which would call `initStyleOption()` a second time and overwrite the result. This is necessary because macOS `QMacStyle` routes text through CoreText which truncates at word boundaries; pre-eliding at character level prevents that. The tooltip threshold uses the same margin constant (`_MARGIN = 16 px`) as the elision.
 
 ### Queue persistence
 

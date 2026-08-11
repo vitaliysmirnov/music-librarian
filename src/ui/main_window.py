@@ -189,8 +189,13 @@ class MainWindow(QMainWindow):
         self._releases_tab.navigate_to(kind, value)
 
     def _on_player_go_to_release(self, folder_path: str):
-        self._show_window()
-        self._releases_tab.navigate_to_release(folder_path)
+        if self._db.get_release_by_path(folder_path):
+            self._show_window()
+            self._releases_tab.navigate_to_release(folder_path)
+        else:
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
+            QDesktopServices.openUrl(QUrl.fromLocalFile(folder_path))
 
     def _toggle_queue(self):
         panel = self._queue_panel

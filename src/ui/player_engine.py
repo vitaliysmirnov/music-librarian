@@ -50,6 +50,27 @@ def _read_full_tags(path: str) -> tuple[str, str, str, int]:
     return "", Path(path).stem, "", 0
 
 
+
+def _row_for_path(path: str, release_row: dict | None) -> tuple[dict, str, str, int]:
+    """Return (row, artist, track_title, duration_ms) for a single file.
+
+    When release_row is provided it is used as-is.  When it is absent
+    (e.g. a plain Finder drop) we read full tags so the album name from
+    the file's metadata ends up in row["title"].
+    """
+    if release_row is not None:
+        artist, title, duration_ms = _read_track_tags(path)
+        return release_row, artist, title, duration_ms
+    artist, title, album, duration_ms = _read_full_tags(path)
+    row = {
+        "folder_path":    str(Path(path).parent),
+        "title":          album,
+        "artist":         artist,
+        "catalog_number": "",
+    }
+    return row, artist, title, duration_ms
+
+
 @dataclass
 class QueueTrack:
     row: dict
@@ -112,18 +133,20 @@ class PlayerEngine(QObject):
         """Replace queue with all tracks from release and start playback."""
         self._queue.clear()
         self._track_idx = -1
+        bare = not row.get("title")
         for p in _audio_paths(row["folder_path"]):
-            artist, title, duration_ms = _read_track_tags(p)
-            self._queue.append(QueueTrack(row=row, path=p, artist=artist, title=title, duration_ms=duration_ms))
+            track_row, artist, title, duration_ms = _row_for_path(p, None if bare else row)
+            self._queue.append(QueueTrack(row=track_row, path=p, artist=artist, title=title, duration_ms=duration_ms))
         self.queue_changed.emit()
         if self._queue:
             self._play_at(0)
 
     def enqueue_release(self, row: dict):
         """Append all tracks from release; start playback if currently idle."""
+        bare = not row.get("title")
         for p in _audio_paths(row["folder_path"]):
-            artist, title, duration_ms = _read_track_tags(p)
-            self._queue.append(QueueTrack(row=row, path=p, artist=artist, title=title, duration_ms=duration_ms))
+            track_row, artist, title, duration_ms = _row_for_path(p, None if bare else row)
+            self._queue.append(QueueTrack(row=track_row, path=p, artist=artist, title=title, duration_ms=duration_ms))
         self.queue_changed.emit()
         if self._track_idx < 0 and self._queue and self._is_stopped():
             self._play_at(0)
@@ -133,8 +156,7 @@ class PlayerEngine(QObject):
         self._queue.clear()
         self._track_idx = -1
         for p in paths:
-            artist, title, duration_ms = _read_track_tags(p)
-            row = release_row if release_row else {"folder_path": str(Path(p).parent)}
+            row, artist, title, duration_ms = _row_for_path(p, release_row)
             self._queue.append(QueueTrack(row=row, path=p, artist=artist, title=title, duration_ms=duration_ms))
         self.queue_changed.emit()
         if self._queue:
@@ -144,8 +166,7 @@ class PlayerEngine(QObject):
         """Append specific audio files to the queue; start playback if idle."""
         added = False
         for p in paths:
-            artist, title, duration_ms = _read_track_tags(p)
-            row = release_row if release_row else {"folder_path": str(Path(p).parent)}
+            row, artist, title, duration_ms = _row_for_path(p, release_row)
             self._queue.append(QueueTrack(row=row, path=p, artist=artist, title=title, duration_ms=duration_ms))
             added = True
         if added:
@@ -251,8 +272,13 @@ class PlayerEngine(QObject):
             ""
         ).strip()
         title  = meta.stringValue(QMediaMetaData.Key.Title).strip()
-        if title:
-            self.metadata_changed.emit(artist, title)
+        if not title:
+            return
+        # Qt may not map a plain "artist" tag to any of the above keys;
+        # fall back to the artist already read by mutagen for this track.
+        if not artist and 0 <= self._track_idx < len(self._queue):
+            artist = self._queue[self._track_idx].artist
+        self.metadata_changed.emit(artist, title)
 
     def _on_audio_device_changed(self):
         self._audio.setDevice(QMediaDevices.defaultAudioOutput())

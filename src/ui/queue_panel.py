@@ -1,6 +1,7 @@
+import json
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRect, QSize, QTimer, Qt, Signal
+from PySide6.QtCore import QMimeData, QPoint, QRect, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QFont, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QFrame, QHBoxLayout, QLabel,
@@ -245,7 +246,7 @@ class _QueueList(QListWidget):
             if from_row != to_row:
                 self.move_requested.emit(from_row, to_row)
         elif event.mimeData().hasUrls() and self._enqueue_cb:
-            self._enqueue_cb(event.mimeData().urls())
+            self._enqueue_cb(event.mimeData())
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -385,14 +386,22 @@ class QueuePanel(QFrame):
         if chosen == act:
             self.go_to_release.emit(folder_path)
 
-    def _enqueue_from_urls(self, urls):
+    def _enqueue_from_urls(self, mime: QMimeData):
         """Enqueue dropped URLs: folders add their full audio content,
         individual audio files are added as-is (not the whole folder)."""
-        seen_folders: set[str] = set()
-        seen_tracks:  set[str] = set()
-        tracks: list[str] = []
+        raw_meta = mime.data("application/x-release-meta")
+        path_meta: dict[str, dict] = {}
+        if raw_meta and not raw_meta.isEmpty():
+            try:
+                path_meta = json.loads(bytes(raw_meta).decode())
+            except Exception:
+                pass
 
-        for url in urls:
+        seen_folders: set[str] = set()
+        seen_tracks:  list[tuple[str, dict | None]] = []
+        seen_track_paths: set[str] = set()
+
+        for url in mime.urls():
             local = url.toLocalFile()
             if not local:
                 continue
@@ -404,12 +413,13 @@ class QueuePanel(QFrame):
                     self._engine.enqueue_release({"folder_path": fp})
             elif p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS:
                 tp = str(p)
-                if tp not in seen_tracks:
-                    seen_tracks.add(tp)
-                    tracks.append(tp)
+                if tp not in seen_track_paths:
+                    seen_track_paths.add(tp)
+                    seen_tracks.append((tp, path_meta.get(tp)))
 
-        if tracks:
-            self._engine.enqueue_tracks(tracks)
+        if seen_tracks:
+            for tp, meta in seen_tracks:
+                self._engine.enqueue_tracks([tp], release_row=meta)
 
     def _on_double_click(self, item: QListWidgetItem):
         idx = self._list.row(item)

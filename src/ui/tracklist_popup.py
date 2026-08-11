@@ -1,6 +1,7 @@
+import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QEvent, QMimeData, QPoint, QUrl, Signal
+from PySide6.QtCore import Qt, QByteArray, QEvent, QMimeData, QPoint, QUrl, Signal
 from PySide6.QtGui import QDrag, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -247,8 +248,19 @@ class TracklistPopup(QDialog):
         urls = [QUrl.fromLocalFile(p) for p in paths if Path(p).is_file()]
         if not urls:
             return
+        meta = {
+            p: {
+                "folder_path":    self._release_row.get("folder_path", ""),
+                "title":          self._release_row.get("title", ""),
+                "catalog_number": self._release_row.get("catalog_number", ""),
+                "artist":         self._release_row.get("artist", ""),
+            }
+            for p in paths if Path(p).is_file()
+        }
         mime = QMimeData()
         mime.setUrls(urls)
+        mime.setData("application/x-release-meta",
+                     QByteArray(json.dumps(meta).encode()))
         drag = QDrag(self._lw)
         drag.setMimeData(mime)
         drag.exec(Qt.DropAction.CopyAction)

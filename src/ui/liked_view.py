@@ -1,10 +1,11 @@
 """Liked tracks table — model and view widget for the Liked sidebar section."""
 
+import json
 from pathlib import Path
 
 from PySide6.QtCore import (
-    Qt, QAbstractTableModel, QEvent, QModelIndex, QMimeData, QPoint,
-    QSortFilterProxyModel, QUrl, Signal,
+    Qt, QAbstractTableModel, QByteArray, QEvent, QModelIndex, QMimeData,
+    QPoint, QSortFilterProxyModel, QUrl, Signal,
 )
 from PySide6.QtGui import QColor, QDrag, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
@@ -177,17 +178,26 @@ class _LikedTableView(QTableView):
         proxy = self.model()
         src_model = proxy.sourceModel()
         urls: list[QUrl] = []
+        meta: dict[str, dict] = {}
         for proxy_row in sorted(selected):
             src_row = proxy.mapToSource(proxy.index(proxy_row, 0)).row()
             row = src_model.get_row(src_row)
             if row and Path(row["path"]).is_file():
                 urls.append(QUrl.fromLocalFile(row["path"]))
+                meta[row["path"]] = {
+                    "folder_path":    row.get("folder_path", ""),
+                    "title":          row.get("album", ""),
+                    "catalog_number": row.get("catalog_number", ""),
+                    "artist":         row.get("artist", ""),
+                }
 
         if not urls:
             return
 
         mime = QMimeData()
         mime.setUrls(urls)
+        mime.setData("application/x-release-meta",
+                     QByteArray(json.dumps(meta).encode()))
         drag = QDrag(self)
         drag.setMimeData(mime)
         drag.exec(Qt.DropAction.CopyAction)

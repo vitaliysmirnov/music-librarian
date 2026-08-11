@@ -1,5 +1,6 @@
 """Playlist content view — sortable table with drag-reorder and URL drop-to-add."""
 
+import json
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -221,13 +222,22 @@ class _PlaylistTableView(QTableView):
             ",".join(str(r) for r in sorted(selected)).encode()
         ))
         # URL payload so the queue panel can accept the drop
-        urls = [
-            QUrl.fromLocalFile(row["path"])
-            for row_i in sorted(selected)
-            if (row := self.model().get_row(row_i)) and Path(row["path"]).is_file()
-        ]
+        urls: list[QUrl] = []
+        meta: dict[str, dict] = {}
+        for row_i in sorted(selected):
+            row = self.model().get_row(row_i)
+            if row and Path(row["path"]).is_file():
+                urls.append(QUrl.fromLocalFile(row["path"]))
+                meta[row["path"]] = {
+                    "folder_path":    row.get("folder_path", ""),
+                    "title":          row.get("album", ""),
+                    "catalog_number": row.get("catalog_number", ""),
+                    "artist":         row.get("artist", ""),
+                }
         if urls:
             mime.setUrls(urls)
+            mime.setData("application/x-release-meta",
+                         QByteArray(json.dumps(meta).encode()))
         drag = QDrag(self)
         drag.setMimeData(mime)
         drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction)

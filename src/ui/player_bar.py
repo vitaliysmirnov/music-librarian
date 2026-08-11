@@ -15,16 +15,16 @@ from src.ui.player_engine import PlayerEngine
 class _LinkLabel(QLabel):
     """QLabel that shows PointingHandCursor only over actual link text.
 
-    QLabel's mouseMoveEvent delegates to QTextControl, which resets the cursor
-    to Arrow when layout hasn't been computed yet (e.g. right after setText).
-    We track link-hover state via linkHovered and re-apply after super() so
-    QTextControl can't override us, while also never showing the hand cursor
-    over empty space between/around link text.
+    QLabel defaults to NoTextInteraction, which means QTextControl never
+    tracks link hovers and linkHovered never fires. Setting
+    LinksAccessibleByMouse makes QTextControl emit linkHovered correctly
+    from the very first hover, without needing a focus round-trip.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._has_links = False
         self._over_link = False
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
         self.linkHovered.connect(lambda url: setattr(self, '_over_link', bool(url)))
 
     def set_has_links(self, has_links: bool) -> None:
@@ -33,10 +33,10 @@ class _LinkLabel(QLabel):
         if not has_links:
             self.unsetCursor()
         else:
-            self.repaint()  # force layout so QTextControl can hit-test links correctly
+            self.repaint()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        super().mouseMoveEvent(event)  # QTextControl updates _over_link via linkHovered
+        super().mouseMoveEvent(event)
         if self._has_links:
             if self._over_link:
                 self.setCursor(Qt.CursorShape.PointingHandCursor)

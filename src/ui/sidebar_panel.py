@@ -5,7 +5,6 @@ from PySide6.QtWidgets import QApplication, QGraphicsOpacityEffect, QLabel, QPus
 _ICON_PX = 14   # logical icon size (points)
 
 _NAV_ITEMS = [
-    ("home",      "Home",           None),
     ("recent",    "Recently Added", None),
     (None,        "Library",        "section"),
     ("releases",  "Releases",       None),
@@ -53,21 +52,6 @@ def _make_pix(draw_fn, px: int, color: QColor) -> QPixmap:
     draw_fn(p, float(px), color)
     p.end()
     return pix
-
-
-def _draw_home(p: QPainter, s: float, c: QColor):
-    p.setBrush(QBrush(c))
-    p.setPen(Qt.PenStyle.NoPen)
-    path = QPainterPath()
-    path.moveTo(s * 0.50, s * 0.07)
-    path.lineTo(s * 0.96, s * 0.50)
-    path.lineTo(s * 0.81, s * 0.50)
-    path.lineTo(s * 0.81, s * 0.95)
-    path.lineTo(s * 0.19, s * 0.95)
-    path.lineTo(s * 0.19, s * 0.50)
-    path.lineTo(s * 0.04, s * 0.50)
-    path.closeSubpath()
-    p.drawPath(path)
 
 
 def _draw_clock(p: QPainter, s: float, c: QColor):
@@ -133,7 +117,6 @@ def _draw_list(p: QPainter, s: float, c: QColor):
 
 
 _ICON_DRAW = {
-    "home":      _draw_home,
     "recent":    _draw_clock,
     "releases":  _draw_disc,
     "liked":     _draw_heart,

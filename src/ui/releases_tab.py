@@ -66,11 +66,10 @@ _AUDIO_EXTENSIONS = {
 }
 
 _NAV_PAGE = {
-    "home":      0,
-    "recent":    1,
-    "releases":  2,
-    "liked":     3,
-    "playlists": 4,
+    "recent":    0,
+    "releases":  1,
+    "liked":     2,
+    "playlists": 3,
 }
 
 
@@ -561,12 +560,6 @@ class _RecentlyAddedPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        header = QLabel("Recently Added")
-        header.setStyleSheet(
-            "font-size: 18px; font-weight: 600; padding: 10px 14px 6px 14px;"
-        )
-        layout.addWidget(header)
-
         self._model = ReleasesModel()
         self._proxy = QIdentityProxyModel()
         self._proxy.setSourceModel(self._model)
@@ -601,11 +594,13 @@ class _RecentlyAddedPage(QWidget):
         self._table.setHorizontalHeader(self._sep_header)
 
         hdr = self._sep_header
-        hdr.setSectionsMovable(False)
+        hdr.setSectionsMovable(True)
         hdr.setSectionsClickable(False)
         hdr.setStretchLastSection(False)
         hdr.setSectionResizeMode(QHeaderView.Interactive)
         hdr.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        hdr.sectionResized.connect(self._save_header_state)
+        hdr.sectionMoved.connect(self._save_header_state)
 
         layout.addWidget(self._table)
 
@@ -626,32 +621,60 @@ class _RecentlyAddedPage(QWidget):
         flat = [dict(r) for r in rows]
         self._model.load(flat, token_order, extra_tokens)
 
-        hdr = self._sep_header
-        # Set canonical visual order: Artist at visual 0, PLAY at visual 1.
-        try:
-            artist_col = self._model.col_for_token("artist")
-            n = self._model.columnCount()
-            for logical in range(n):
-                vis = hdr.visualIndex(logical)
-                if vis != logical:
-                    hdr.moveSection(vis, logical)
-            hdr.moveSection(hdr.visualIndex(artist_col), 0)
-            self._sep_header.set_separator_column(artist_col)
-        except (ValueError, IndexError):
-            pass
-        hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
-        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
-        for i, tok in enumerate(token_order):
-            hdr.resizeSection(1 + i, _TOKEN_WIDTH.get(tok, 100))
-        n_kn = len(token_order)
-        for i in range(len(extra_tokens)):
-            hdr.resizeSection(1 + n_kn + i, _EXTRA_DEFAULT_WIDTH)
-        for i, w in enumerate(_TAIL_WIDTHS):
-            hdr.resizeSection(1 + n_kn + len(extra_tokens) + i, w)
+        self._restore_header_state(token_order, extra_tokens)
 
         self._count_label.setText(
             f"Showing {len(rows)} most recently added release{'s' if len(rows) != 1 else ''}"
         )
+
+    def sync_header_from_db(self):
+        if self._model.columnCount() == 0:
+            return
+        mask = self._db.get_setting("folder_mask", DEFAULT_MASK)
+        token_order = _known_token_order(mask)
+        extra_tokens = get_custom_tokens(mask)
+        self._restore_header_state(token_order, extra_tokens)
+
+    def _save_header_state(self, *_):
+        state: QByteArray = self._sep_header.saveState()
+        self._db.set_setting(SETTINGS_KEY, state.toBase64().data().decode())
+
+    def _restore_header_state(self, token_order, extra_tokens):
+        hdr = self._sep_header
+        hdr.blockSignals(True)
+        try:
+            raw = self._db.get_setting(SETTINGS_KEY, "")
+            if raw:
+                try:
+                    state = QByteArray.fromBase64(raw.encode())
+                    hdr.restoreState(state)
+                    hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
+                    hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
+                    try:
+                        artist_col = self._model.col_for_token("artist")
+                        self._sep_header.set_separator_column(artist_col)
+                    except (ValueError, IndexError):
+                        pass
+                    return
+                except Exception:
+                    pass
+            # fallback: apply default widths
+            hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
+            hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
+            for i, tok in enumerate(token_order):
+                hdr.resizeSection(1 + i, _TOKEN_WIDTH.get(tok, 100))
+            n_kn = len(token_order)
+            for i in range(len(extra_tokens)):
+                hdr.resizeSection(1 + n_kn + i, _EXTRA_DEFAULT_WIDTH)
+            for i, w in enumerate(_TAIL_WIDTHS):
+                hdr.resizeSection(1 + n_kn + len(extra_tokens) + i, w)
+            try:
+                artist_col = self._model.col_for_token("artist")
+                self._sep_header.set_separator_column(artist_col)
+            except (ValueError, IndexError):
+                pass
+        finally:
+            hdr.blockSignals(False)
 
 
 class ReleasesTab(QWidget):
@@ -664,7 +687,6 @@ class ReleasesTab(QWidget):
         self._db = db
         self._expanded: set[str] = set()
         self._header_state: QByteArray | None = None  # in-memory cache
-        self._clamping_section = False
         self._setup_ui()
         self._restore_header_state()
 
@@ -714,18 +736,16 @@ class ReleasesTab(QWidget):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([170, 900])
 
-        self._stack.addWidget(_make_stub("Home"))                  # 0
-
         self._recent_page = _RecentlyAddedPage(self._db, play_cb=self._on_play_clicked)
-        self._stack.addWidget(self._recent_page)                   # 1
+        self._stack.addWidget(self._recent_page)                   # 0
 
-        self._stack.addWidget(self._create_albums_widget())        # 2  releases
-        self._stack.addWidget(_make_stub("Liked"))                 # 3
-        self._stack.addWidget(_make_stub("All Playlists"))         # 4
+        self._stack.addWidget(self._create_albums_widget())        # 1  releases
+        self._stack.addWidget(_make_stub("Liked"))                 # 2
+        self._stack.addWidget(_make_stub("All Playlists"))         # 3
 
         self._sidebar.nav_changed.connect(self._on_nav)
-        self._sidebar.set_current("home")
-        self._stack.setCurrentIndex(_NAV_PAGE["home"])
+        self._sidebar.set_current("recent")
+        self._stack.setCurrentIndex(_NAV_PAGE["recent"])
 
     def _create_albums_widget(self) -> QWidget:
         widget = QWidget()
@@ -782,7 +802,6 @@ class ReleasesTab(QWidget):
         hdr.setContextMenuPolicy(Qt.CustomContextMenu)
         hdr.customContextMenuRequested.connect(self._show_header_menu)
         hdr.sectionMoved.connect(self._on_section_moved)
-        hdr.sectionResized.connect(self._enforce_min_section_width)
         hdr.sectionResized.connect(self._save_header_state)
         hdr.sectionClicked.connect(self._on_header_clicked)
 
@@ -841,6 +860,11 @@ class ReleasesTab(QWidget):
 
     def _on_nav(self, key: str):
         self._stack.setCurrentIndex(_NAV_PAGE.get(key, _NAV_PAGE["releases"]))
+        if key == "recent":
+            self._recent_page.sync_header_from_db()
+        elif key == "releases":
+            self._header_state = None
+            self._restore_header_state()
 
     def _on_search_changed(self, text: str):
         if text.strip():
@@ -948,24 +972,6 @@ class ReleasesTab(QWidget):
             self._save_header_state()
 
     # ── Header state ───────────────────────────────────────────────────────
-
-    def _header_min_width(self, logical: int) -> int:
-        if logical == COL_PLAY:
-            return _PLAY_WIDTH
-        text = str(self._model.headerData(logical, Qt.Horizontal, Qt.DisplayRole) or "")
-        if not text:
-            return 20
-        fm = self._sep_header.fontMetrics()
-        return fm.horizontalAdvance(text) + 8  # 4px padding each side
-
-    def _enforce_min_section_width(self, logical: int, _old: int, new_size: int):
-        if self._clamping_section:
-            return
-        min_w = self._header_min_width(logical)
-        if new_size < min_w:
-            self._clamping_section = True
-            self._table.horizontalHeader().resizeSection(logical, min_w)
-            self._clamping_section = False
 
     def _on_section_moved(self, logical, old_visual, new_visual):
         hdr = self._sep_header

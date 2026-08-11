@@ -356,7 +356,7 @@ class LikedTracksView(QWidget):
         if not rows:
             return
         paths = [r["path"] for r in rows]
-        release_row = {"folder_path": "", "title": "Liked", "artist": "", "catalog_number": ""}
+        release_row = {"folder_path": "", "title": "Liked", "artist": "", "catalog_number": "", "_nav_kind": "liked"}
         self.play_track_requested.emit(paths, release_row)
 
     def _enqueue_selected(self):

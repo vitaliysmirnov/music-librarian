@@ -1198,6 +1198,12 @@ class ReleasesTab(QWidget):
     # ── Sidebar navigation ────────────────────────────────────────────────────
 
     def navigate_to(self, kind: str, value: str):
+        if kind == "liked":
+            self._on_nav("liked")
+            return
+        if kind == "playlist":
+            self._on_nav(f"playlist:{value}")
+            return
         self._sidebar.set_current("releases")
         self._stack.setCurrentIndex(_NAV_PAGE["releases"])
         self._search.setText(value)
@@ -1267,6 +1273,7 @@ class ReleasesTab(QWidget):
         self._on_popup_playlist_track_added(playlist_id)
 
     def _on_nav(self, key: str):
+        self._sidebar.set_current(key)
         if key.startswith("playlist:"):
             pid = int(key.split(":")[1])
             pl = self._db.get_playlist(pid)

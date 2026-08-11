@@ -197,6 +197,8 @@ class PlayerBar(QWidget):
         self._current_title  = ""
         self._playlists: list[dict] = []
         self._is_library_track = False
+        self._nav_kind = ""   # "liked" | "playlist" | ""
+        self._nav_id   = 0    # playlist_id when _nav_kind == "playlist"
         self.setFixedHeight(_BAR_H)
         self.setStyleSheet(_BAR_STYLE)
         self._setup_ui()
@@ -476,35 +478,53 @@ class PlayerBar(QWidget):
     def _on_info_context_menu(self, pos):
         if not self._current_path:
             return
+        sender = self.sender()
         folder_path = (self._current_row or {}).get("folder_path") or ""
         if not folder_path:
             folder_path = str(Path(self._current_path).parent)
         album = (self._current_row or {}).get("title") or ""
 
         menu = QMenu(self)
-        act_go = menu.addAction("Go to Release")
 
-        pl_actions: dict = {}
-        if self._is_library_track and self._playlists:
-            menu.addSeparator()
-            pl_menu = menu.addMenu("Add to Playlist")
-            for pl in self._playlists:
-                act = pl_menu.addAction(pl["name"])
-                pl_actions[act] = pl["id"]
-
-        chosen = menu.exec(self.sender().mapToGlobal(pos))
-        if chosen == act_go:
-            self.go_to_release_requested.emit(folder_path)
-        elif chosen in pl_actions:
-            self.add_to_playlist_requested.emit(
-                pl_actions[chosen],
-                self._current_path,
-                self._current_artist,
-                self._current_title,
-                album,
-                folder_path,
-                self._duration_ms,
-            )
+        if sender is self._meta_lbl:
+            # Meta label: navigate to the source context
+            if self._nav_kind == "playlist":
+                act_go = menu.addAction("Go to Playlist")
+            elif self._nav_kind == "liked":
+                act_go = menu.addAction("Go to Liked")
+            else:
+                act_go = menu.addAction("Go to Release")
+            chosen = menu.exec(sender.mapToGlobal(pos))
+            if chosen == act_go:
+                if self._nav_kind == "playlist":
+                    self.navigate_requested.emit("playlist", str(self._nav_id))
+                elif self._nav_kind == "liked":
+                    self.navigate_requested.emit("liked", "")
+                else:
+                    self.go_to_release_requested.emit(folder_path)
+        else:
+            # Track label: Go to Release + Add to Playlist
+            act_go = menu.addAction("Go to Release")
+            pl_actions: dict = {}
+            if self._is_library_track and self._playlists:
+                menu.addSeparator()
+                pl_menu = menu.addMenu("Add to Playlist")
+                for pl in self._playlists:
+                    act = pl_menu.addAction(pl["name"])
+                    pl_actions[act] = pl["id"]
+            chosen = menu.exec(sender.mapToGlobal(pos))
+            if chosen == act_go:
+                self.go_to_release_requested.emit(folder_path)
+            elif chosen in pl_actions:
+                self.add_to_playlist_requested.emit(
+                    pl_actions[chosen],
+                    self._current_path,
+                    self._current_artist,
+                    self._current_title,
+                    album,
+                    folder_path,
+                    self._duration_ms,
+                )
 
     def _on_link(self, href: str):
         if "://" in href:
@@ -524,6 +544,8 @@ class PlayerBar(QWidget):
         self._current_path   = path
         self._current_artist = ""
         self._current_title  = ""
+        self._nav_kind = (row or {}).get("_nav_kind", "")
+        self._nav_id   = (row or {}).get("_nav_id", 0) or 0
         self._track_lbl.setText(html.escape(Path(path).stem))
         self._track_lbl.set_has_links(False)
         self._rebuild_meta_label()

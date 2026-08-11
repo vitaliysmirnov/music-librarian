@@ -465,7 +465,8 @@ class PlaylistView(QWidget):
         rows = [r for r in self._model._rows if Path(r["path"]).is_file()]
         if not rows:
             return
-        release_row = {"folder_path": "", "title": self._name, "artist": "", "catalog_number": ""}
+        release_row = {"folder_path": "", "title": self._name, "artist": "", "catalog_number": "",
+                       "_nav_kind": "playlist", "_nav_id": self._playlist_id}
         self.play_track_requested.emit([r["path"] for r in rows], release_row)
 
     def _enqueue_selected(self):

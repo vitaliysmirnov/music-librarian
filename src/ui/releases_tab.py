@@ -23,7 +23,7 @@ from src.ui.liked_view import LikedTracksView
 from src.ui.playlist_view import PlaylistView
 from src.ui.tracklist_popup import TracklistPopup
 from src.ui.sidebar_panel import SidebarPanel
-from src.ui.style import ROW_HEIGHT, TABLE_STYLE, SEARCH_STYLE
+from src.ui.style import ElidedTooltipDelegate, ROW_HEIGHT, TABLE_STYLE, SEARCH_STYLE
 
 # Column 0 is always the play button.
 COL_PLAY = 0
@@ -306,7 +306,7 @@ class ReleasesModel(QAbstractTableModel):
         return mime
 
 
-class _PlayButtonDelegate(QStyledItemDelegate):
+class _PlayButtonDelegate(ElidedTooltipDelegate):
     def __init__(self, db, toggle_expand_cb=None, proxy=None, artist_col_fn=None,
                  play_cb=None, parent=None):
         super().__init__(parent)
@@ -379,6 +379,20 @@ class _PlayButtonDelegate(QStyledItemDelegate):
         if index.column() == COL_PLAY:
             return QSize(_PLAY_WIDTH, ROW_HEIGHT)
         return super().sizeHint(option, index)
+
+    def helpEvent(self, event, view, option, index):
+        from PySide6.QtCore import QEvent
+        if event and event.type() == QEvent.Type.ToolTip:
+            if index.column() == COL_PLAY:
+                return False
+            try:
+                artist_col = self._artist_col_fn() if self._artist_col_fn else -1
+            except (ValueError, IndexError):
+                artist_col = -1
+            if artist_col >= 0 and index.column() == artist_col \
+                    and not self._is_group_start(index.row()):
+                return False
+        return super().helpEvent(event, view, option, index)
 
     def editorEvent(self, event, model, option, index):
         from PySide6.QtCore import QEvent

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem, QTableView, QVBoxLayout, QWidget,
 )
 
-from src.ui.style import ROW_HEIGHT, TABLE_STYLE
+from src.ui.style import ElidedTooltipDelegate, ROW_HEIGHT, TABLE_STYLE
 from src.utils import fmt_ms
 from src.utils.audio import AUDIO_EXTENSIONS
 
@@ -365,6 +365,7 @@ class PlaylistView(QWidget):
                 hdr.setSectionResizeMode(col, QHeaderView.Fixed)
                 hdr.resizeSection(col, w)
 
+        self._table.setItemDelegate(ElidedTooltipDelegate(self._table))
         self._table.setItemDelegateForColumn(
             COL_LIKE, _LikeDelegate(COL_LIKE, self._toggle_like_at, self._table)
         )

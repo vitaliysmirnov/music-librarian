@@ -29,6 +29,35 @@ log = get_logger()
 _DRIVE_POLL_INTERVAL_MS = 20_000
 
 
+def _apply_tray_template() -> None:
+    """Tell macOS to treat our status-bar icon as a template image.
+
+    Template images are colourised automatically — white on dark bars, black on
+    light bars.  Qt does not set this flag via the public API, so we reach into
+    AppKit after the NSStatusItem has been created.  We only touch non-template
+    images sized ≈22 pt to avoid interfering with other apps' coloured icons.
+    """
+    try:
+        from AppKit import NSStatusBar  # pyobjc-framework-Cocoa
+        bar = NSStatusBar.systemStatusBar()
+        items = bar.valueForKey_("_statusItems") or []
+        for item in items:
+            try:
+                btn = item.button()
+                if btn is None:
+                    continue
+                img = btn.image()
+                if img is None or img.isTemplate():
+                    continue
+                sz = img.size()
+                if 18 < sz.width < 26 and 18 < sz.height < 26:
+                    img.setTemplate_(True)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 class _FsChangeSignal(QObject):
     """Bridges the watchdog thread to the Qt main thread."""
     triggered = Signal()
@@ -318,7 +347,12 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _make_tray_icon() -> QIcon:
         """Draw vinyl+magnifier tray icon. Black on transparent = macOS template image."""
-        pix = QPixmap(22, 22)
+        # Render at the screen's device pixel ratio so the icon is crisp on Retina.
+        app = QApplication.instance()
+        dpr = app.devicePixelRatio() if app else 2.0
+        phys = round(22 * dpr)
+        pix = QPixmap(phys, phys)
+        pix.setDevicePixelRatio(dpr)
         pix.fill(Qt.GlobalColor.transparent)
         p = QPainter(pix)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -371,6 +405,12 @@ class MainWindow(QMainWindow):
         self._tray.setContextMenu(menu)
         self._tray.activated.connect(self._on_tray_activated)
         self._tray.show()
+
+        # Qt does not set NSImage.template=YES automatically, so the icon stays
+        # black on a dark menu bar instead of being colorised by macOS.
+        # Apply the flag after a short delay to let Qt finish creating the NSStatusItem.
+        if sys.platform == "darwin":
+            QTimer.singleShot(300, _apply_tray_template)
 
     # ── Settings ──────────────────────────────────────────────────────────
 

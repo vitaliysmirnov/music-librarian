@@ -1,7 +1,10 @@
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QKeySequence, QShortcut
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QEvent, QMimeData, QPoint, QUrl, Signal
+from PySide6.QtGui import QDrag, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -186,6 +189,9 @@ class TracklistPopup(QDialog):
         self._lw.itemDoubleClicked.connect(self._on_double_click)
         self._lw.customContextMenuRequested.connect(self._on_context_menu)
 
+        self._drag_start_pos: QPoint | None = None
+        self._lw.viewport().installEventFilter(self)
+
         QShortcut(QKeySequence.StandardKey.SelectAll, self._lw).activated.connect(
             self._lw.selectAll
         )
@@ -209,6 +215,43 @@ class TracklistPopup(QDialog):
         btn.setChecked(liked)
         btn.setText("♥" if liked else "♡")
         btn.blockSignals(False)
+
+    def eventFilter(self, obj, event):
+        if obj is self._lw.viewport():
+            t = event.type()
+            if t == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                self._drag_start_pos = event.pos()
+            elif t == QEvent.Type.MouseMove:
+                if self._drag_start_pos is not None and (event.buttons() & Qt.MouseButton.LeftButton):
+                    if (event.pos() - self._drag_start_pos).manhattanLength() >= QApplication.startDragDistance():
+                        start = self._drag_start_pos
+                        self._drag_start_pos = None
+                        self._exec_drag(start)
+                        return True
+            elif t == QEvent.Type.MouseButtonRelease:
+                self._drag_start_pos = None
+        return super().eventFilter(obj, event)
+
+    def _exec_drag(self, press_pos: QPoint):
+        item = self._lw.itemAt(press_pos)
+        if item is None:
+            return
+        selected = self._lw.selectedItems()
+        if not selected:
+            selected = [item]
+        paths = [
+            self._paths[self._lw.row(i)]
+            for i in selected
+            if 0 <= self._lw.row(i) < len(self._paths)
+        ]
+        urls = [QUrl.fromLocalFile(p) for p in paths if Path(p).is_file()]
+        if not urls:
+            return
+        mime = QMimeData()
+        mime.setUrls(urls)
+        drag = QDrag(self._lw)
+        drag.setMimeData(mime)
+        drag.exec(Qt.DropAction.CopyAction)
 
     def _selected_paths(self) -> list[str]:
         return [

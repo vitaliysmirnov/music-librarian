@@ -142,6 +142,8 @@ class MainWindow(QMainWindow):
         self._releases_tab.go_to_release.connect(lambda _: self._tabs.setCurrentWidget(self._releases_tab))
         self._player_bar.navigate_requested.connect(self._on_navigate_requested)
         self._player_bar.like_toggled.connect(self._on_like_toggled)
+        self._player_bar.go_to_release_requested.connect(self._on_player_go_to_release)
+        self._queue_panel.go_to_release.connect(self._on_player_go_to_release)
         self._player_engine.track_changed.connect(self._on_track_changed_liked)
 
         sb = QStatusBar()
@@ -167,11 +169,13 @@ class MainWindow(QMainWindow):
 
     def _on_like_toggled(self, path: str, row: dict, checked: bool):
         if checked:
-            from src.ui.player_engine import _read_track_tags
-            artist, title, duration_ms = _read_track_tags(path)
-            album       = (row.get("title") or "").strip()
+            from src.ui.player_engine import _read_full_tags
+            artist, title, album_tag, duration_ms = _read_full_tags(path)
             folder_path = (row.get("folder_path") or str(Path(path).parent))
-            self._db.like_track(path, artist, title, album, folder_path, duration_ms)
+            if not album_tag:
+                release = self._db.get_release_by_path(str(Path(path).parent))
+                album_tag = dict(release).get("title", "") if release else ""
+            self._db.like_track(path, artist, title, album_tag, folder_path, duration_ms)
         else:
             self._db.unlike_track(path)
         self._releases_tab.refresh_liked()
@@ -183,6 +187,10 @@ class MainWindow(QMainWindow):
     def _on_navigate_requested(self, kind: str, value: str):
         self._tabs.setCurrentWidget(self._releases_tab)
         self._releases_tab.navigate_to(kind, value)
+
+    def _on_player_go_to_release(self, folder_path: str):
+        self._show_window()
+        self._releases_tab.navigate_to_release(folder_path)
 
     def _toggle_queue(self):
         panel = self._queue_panel

@@ -467,13 +467,19 @@ class PlaylistView(QWidget):
         if row.get("is_liked"):
             self._db.unlike_track(row["path"])
         else:
-            self._db.like_track(
-                row["path"], row.get("artist", ""), row.get("title", ""),
-                row.get("album", ""), row.get("folder_path", ""),
-                row.get("duration_ms", 0),
-            )
+            self._like_row(row)
         self._refresh_model()
         self.liked_changed.emit()
+
+    def _like_row(self, row: dict):
+        from src.ui.player_engine import _read_full_tags
+        artist, title, album, duration_ms = _read_full_tags(row["path"])
+        if not album:
+            album = row.get("album", "")
+        self._db.like_track(
+            row["path"], artist or row.get("artist", ""), title or row.get("title", ""),
+            album, row.get("folder_path", ""), duration_ms or row.get("duration_ms", 0),
+        )
 
     def _remove_selected(self):
         if self._playlist_id is None:
@@ -491,7 +497,7 @@ class PlaylistView(QWidget):
     def _on_urls_dropped(self, urls: list):
         if self._playlist_id is None:
             return
-        from src.ui.player_engine import _read_track_tags
+        from src.ui.player_engine import _read_full_tags
         added = False
         for url in urls:
             local = url.toLocalFile()
@@ -499,19 +505,19 @@ class PlaylistView(QWidget):
                 continue
             p = Path(local)
             if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS:
-                artist, title, duration_ms = _read_track_tags(str(p))
+                artist, title, album, duration_ms = _read_full_tags(str(p))
                 self._db.add_track_to_playlist(
                     self._playlist_id, str(p), artist, title,
-                    "", str(p.parent), duration_ms,
+                    album, str(p.parent), duration_ms,
                 )
                 added = True
             elif p.is_dir():
                 for f in sorted(p.iterdir()):
                     if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS:
-                        artist, title, duration_ms = _read_track_tags(str(f))
+                        artist, title, album, duration_ms = _read_full_tags(str(f))
                         self._db.add_track_to_playlist(
                             self._playlist_id, str(f), artist, title,
-                            "", str(p), duration_ms,
+                            album, str(p), duration_ms,
                         )
                         added = True
         if added:
@@ -552,11 +558,7 @@ class PlaylistView(QWidget):
             if is_liked:
                 self._db.unlike_track(row["path"])
             else:
-                self._db.like_track(
-                    row["path"], row.get("artist", ""), row.get("title", ""),
-                    row.get("album", ""), row.get("folder_path", ""),
-                    row.get("duration_ms", 0),
-                )
+                self._like_row(row)
             self.liked_changed.emit()
         elif chosen == act_go_release:
             self.go_to_release.emit(row["folder_path"])

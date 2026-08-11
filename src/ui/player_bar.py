@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtGui import QMouseEvent, QPalette
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
+    QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
 )
 
 from src.ui.player_engine import PlayerEngine
@@ -180,9 +180,10 @@ PlayerBar QPushButton#btn_queue:checked { color: #3875d7; }
 
 
 class PlayerBar(QWidget):
-    queue_toggled      = Signal()
-    navigate_requested = Signal(str, str)   # kind ("artist"|"track"|"album"|"catno"), value
-    like_toggled       = Signal(str, dict, bool)  # path, row, is_liked
+    queue_toggled           = Signal()
+    navigate_requested      = Signal(str, str)   # kind, value
+    like_toggled            = Signal(str, dict, bool)  # path, row, is_liked
+    go_to_release_requested = Signal(str)        # folder_path
 
     def __init__(self, engine: PlayerEngine, parent=None):
         super().__init__(parent)
@@ -218,6 +219,10 @@ class PlayerBar(QWidget):
         self._meta_lbl.setTextFormat(Qt.TextFormat.RichText)
         self._meta_lbl.setOpenExternalLinks(False)
         self._meta_lbl.linkActivated.connect(self._on_link)
+
+        for lbl in (self._track_lbl, self._meta_lbl):
+            lbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            lbl.customContextMenuRequested.connect(self._on_info_context_menu)
 
         self._info_row = QWidget(self)
         il = QVBoxLayout(self._info_row)
@@ -458,6 +463,18 @@ class PlayerBar(QWidget):
                      len(cat_no) > self._MAX_CATNO)
         tip = " — ".join(p for p in [album, cat_no] if p)
         self._meta_lbl.setToolTip(tip if truncated else "")
+
+    def _on_info_context_menu(self, pos):
+        if not self._current_path:
+            return
+        folder_path = (self._current_row or {}).get("folder_path") or ""
+        if not folder_path:
+            folder_path = str(Path(self._current_path).parent)
+        menu = QMenu(self)
+        act = menu.addAction("Go to Release")
+        chosen = menu.exec(self.sender().mapToGlobal(pos))
+        if chosen == act:
+            self.go_to_release_requested.emit(folder_path)
 
     def _on_link(self, href: str):
         if "://" in href:

@@ -4,7 +4,7 @@ from PySide6.QtCore import QPoint, QRect, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QFont, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QFrame, QHBoxLayout, QLabel,
-    QListWidget, QListWidgetItem, QPushButton,
+    QListWidget, QListWidgetItem, QMenu, QPushButton,
     QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -252,6 +252,8 @@ class _QueueList(QListWidget):
 
 
 class QueuePanel(QFrame):
+    go_to_release = Signal(str)   # folder_path
+
     def __init__(self, engine: PlayerEngine, parent=None):
         super().__init__(parent)
         self._engine = engine
@@ -291,7 +293,9 @@ class QueuePanel(QFrame):
         self._list.setSpacing(0)
         self._list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._list.itemDoubleClicked.connect(self._on_double_click)
+        self._list.customContextMenuRequested.connect(self._on_context_menu)
         self._list.move_requested.connect(self._on_move_requested)
         layout.addWidget(self._list)
 
@@ -363,6 +367,23 @@ class QueuePanel(QFrame):
         return w
 
     # ── Interactions ──────────────────────────────────────────────────────
+
+    def _on_context_menu(self, pos):
+        item = self._list.itemAt(pos)
+        if item is None:
+            return
+        idx = self._list.row(item)
+        if not (0 <= idx < len(self._engine.queue)):
+            return
+        track = self._engine.queue[idx]
+        folder_path = (track.row or {}).get("folder_path") or ""
+        if not folder_path:
+            folder_path = str(Path(track.path).parent)
+        menu = QMenu(self)
+        act = menu.addAction("Go to Release")
+        chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
+        if chosen == act:
+            self.go_to_release.emit(folder_path)
 
     def _enqueue_from_urls(self, urls):
         """Enqueue dropped URLs: folders add their full audio content,

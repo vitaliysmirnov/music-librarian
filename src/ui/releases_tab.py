@@ -719,18 +719,48 @@ class _ReleasesView(QWidget):
         if self._tracklist_popup is not None:
             self._tracklist_popup.sync_like(path, liked)
 
+    def _select_src_row(self, src_row: int) -> None:
+        src_idx   = self._model.index(src_row, 0)
+        proxy_idx = self._proxy.mapFromSource(src_idx)
+        if proxy_idx.isValid():
+            self._table.selectionModel().select(
+                proxy_idx,
+                self._table.selectionModel().SelectionFlag.ClearAndSelect |
+                self._table.selectionModel().SelectionFlag.Rows,
+            )
+            self._table.scrollTo(proxy_idx, QAbstractItemView.ScrollHint.PositionAtCenter)
+
     def select_release(self, folder_path: str) -> None:
+        # Direct match — regular releases, already-expanded disc children, or multi-disc parents.
         for src_row, row in enumerate(self._model._rows):
             if row.get("folder_path") == folder_path:
-                src_idx   = self._model.index(src_row, 0)
-                proxy_idx = self._proxy.mapFromSource(src_idx)
-                if proxy_idx.isValid():
-                    self._table.selectionModel().select(
-                        proxy_idx,
-                        self._table.selectionModel().SelectionFlag.ClearAndSelect |
-                        self._table.selectionModel().SelectionFlag.Rows,
-                    )
-                    self._table.scrollTo(proxy_idx, QAbstractItemView.ScrollHint.PositionAtCenter)
+                if (self._expandable and row.get("is_multi_disc")
+                        and folder_path not in self._expanded):
+                    # Collapsed multi-disc container — expand it first, then re-find.
+                    self._expanded.add(folder_path)
+                    self.refresh()
+                    for src_row2, row2 in enumerate(self._model._rows):
+                        if row2.get("folder_path") == folder_path:
+                            self._select_src_row(src_row2)
+                            return
+                    return
+                self._select_src_row(src_row)
+                return
+
+        # Not found — folder_path is a disc child inside a collapsed multi-disc parent.
+        if not self._expandable:
+            return
+        for src_row, row in enumerate(self._model._rows):
+            if not row.get("is_multi_disc"):
+                continue
+            disc_entries = self._db.get_disc_entries(row["folder_path"])
+            if any(d["folder_path"] == folder_path for d in disc_entries):
+                self._expanded.add(row["folder_path"])
+                self.refresh()
+                for src_row2, row2 in enumerate(self._model._rows):
+                    if row2.get("folder_path") == folder_path:
+                        self._select_src_row(src_row2)
+                        return
                 break
 
     # ── Row context menu ───────────────────────────────────────────────────────
@@ -1143,6 +1173,8 @@ class ReleasesTab(QWidget):
 
         self._sidebar.nav_changed.connect(self._on_nav)
         self._sidebar.add_playlist_requested.connect(self._on_add_playlist)
+        self._sidebar.delete_playlist_requested.connect(self._on_delete_playlist)
+        self._sidebar.tracks_dropped_on_playlist.connect(self._on_tracks_dropped_on_playlist)
         self._sidebar.set_current("releases")
         self._stack.setCurrentIndex(_NAV_PAGE["releases"])
         self._refresh_playlists()
@@ -1175,8 +1207,39 @@ class ReleasesTab(QWidget):
         self._db.create_playlist(name.strip())
         self._refresh_playlists()
 
+    def _on_delete_playlist(self, playlist_id: int):
+        pl = self._db.get_playlist(playlist_id)
+        if not pl:
+            return
+        reply = QMessageBox.question(
+            self, "Delete Playlist",
+            f"Delete playlist \"{pl['name']}\"?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._db.delete_playlist(playlist_id)
+        if self._sidebar._current == f"playlist:{playlist_id}":
+            self._sidebar.set_current("releases")
+            self._stack.setCurrentIndex(0)
+        self._refresh_playlists()
+
     def _refresh_playlists(self):
         self._sidebar.refresh_playlists(self._db.get_playlists())
+
+    def _on_tracks_dropped_on_playlist(self, playlist_id: int, urls: list) -> None:
+        from src.ui.player_engine import _read_full_tags
+        for url in urls:
+            local = url.toLocalFile()
+            if not local:
+                continue
+            p = Path(local)
+            if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS:
+                artist, title, album, duration_ms = _read_full_tags(str(p))
+                self._db.add_track_to_playlist(
+                    playlist_id, str(p), artist, title, album, str(p.parent), duration_ms,
+                )
+        self._on_popup_playlist_track_added(playlist_id)
 
     def _on_nav(self, key: str):
         if key.startswith("playlist:"):

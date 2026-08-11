@@ -1,6 +1,6 @@
 from PySide6.QtCore import Qt, QPointF, QRectF, QSize, Signal
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 _ICON_PX = 14   # logical icon size (points)
 
@@ -27,6 +27,11 @@ SidebarPanel QPushButton:hover:!checked {
 SidebarPanel QPushButton:checked {
     background: #3875d7;
     color: white;
+    font-weight: 700;
+}
+SidebarPanel QPushButton[isPlaylist="true"]:checked {
+    background: transparent;
+    color: palette(windowText);
 }
 SidebarPanel QPushButton#add_playlist_btn {
     text-align: center;
@@ -39,6 +44,10 @@ SidebarPanel QPushButton#add_playlist_btn {
     min-height: 22px;
     max-height: 22px;
     border-radius: 4px;
+}
+SidebarPanel QPushButton[dragOver="true"] {
+    background: rgba(56, 117, 215, 0.30);
+    border: 1px solid rgba(56, 117, 215, 0.55);
 }
 """
 
@@ -108,11 +117,60 @@ def _icon_color_off() -> QColor:
     return QColor(185, 185, 193) if is_dark else QColor(105, 105, 115)
 
 
+# ── Playlist button with drop support ─────────────────────────────────────────
+
+class _PlaylistButton(QPushButton):
+    """Playlist nav button that also accepts URL drops to add tracks."""
+    tracks_dropped   = Signal(int, list)  # playlist_id, list[QUrl]
+    delete_requested = Signal(int)        # playlist_id
+
+    def __init__(self, playlist_id: int, name: str, parent=None):
+        super().__init__(name, parent)
+        self._playlist_id = playlist_id
+        self.setAcceptDrops(True)
+        self.setProperty("isPlaylist", "true")
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
+
+    def _on_context_menu(self, pos):
+        menu = QMenu(self)
+        act_delete = menu.addAction("Delete Playlist")
+        if menu.exec(self.mapToGlobal(pos)) == act_delete:
+            self.delete_requested.emit(self._playlist_id)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            self.setProperty("dragOver", True)
+            self.style().unpolish(self)
+            self.style().polish(self)
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self.setProperty("dragOver", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        self.setProperty("dragOver", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        if event.mimeData().hasUrls():
+            self.tracks_dropped.emit(self._playlist_id, event.mimeData().urls())
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+
 # ── Sidebar widget ─────────────────────────────────────────────────────────────
 
 class SidebarPanel(QWidget):
-    nav_changed             = Signal(str)
-    add_playlist_requested  = Signal()
+    nav_changed                = Signal(str)
+    add_playlist_requested     = Signal()
+    delete_playlist_requested  = Signal(int)          # playlist_id
+    tracks_dropped_on_playlist = Signal(int, list)    # playlist_id, list[QUrl]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -182,14 +240,22 @@ class SidebarPanel(QWidget):
         pl_hdr_l.addWidget(add_btn)
         layout.addWidget(pl_hdr)
 
-        # ── Playlist buttons container ────────────────────────────────────
+        # ── Playlist buttons container (scrollable) ───────────────────────
         self._playlists_container = QWidget()
         self._playlists_layout = QVBoxLayout(self._playlists_container)
         self._playlists_layout.setContentsMargins(0, 0, 0, 0)
         self._playlists_layout.setSpacing(1)
-        layout.addWidget(self._playlists_container)
+        self._playlists_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        layout.addStretch()
+        scroll = QScrollArea()
+        scroll.setWidget(self._playlists_container)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        scroll.viewport().setStyleSheet("background: transparent;")
+        layout.addWidget(scroll, 1)
 
     def refresh_playlists(self, playlists: list) -> None:
         # Remove old playlist buttons
@@ -201,12 +267,14 @@ class SidebarPanel(QWidget):
         for pl in playlists:
             pid  = pl["id"]
             name = pl["name"]
-            btn  = QPushButton(name)
+            btn  = _PlaylistButton(pid, name)
             btn.setFlat(True)
             btn.setCheckable(True)
             btn.setIcon(QIcon(self._pix_off["playlist"]))
             btn.setIconSize(QSize(_ICON_PX, _ICON_PX))
             btn.clicked.connect(lambda _c, k=f"playlist:{pid}": self._on_click(k))
+            btn.tracks_dropped.connect(lambda pid_, urls: self.tracks_dropped_on_playlist.emit(pid_, urls))
+            btn.delete_requested.connect(self.delete_playlist_requested)
             self._playlists_layout.addWidget(btn)
             self._playlist_buttons[pid] = btn
 
@@ -215,7 +283,6 @@ class SidebarPanel(QWidget):
             pid = int(self._current.split(":")[1])
             if pid in self._playlist_buttons:
                 self._playlist_buttons[pid].setChecked(True)
-                self._playlist_buttons[pid].setIcon(QIcon(self._pix_on["playlist"]))
 
     def _on_click(self, key: str):
         self.set_current(key)
@@ -249,4 +316,3 @@ class SidebarPanel(QWidget):
             if pid in self._playlist_buttons:
                 btn = self._playlist_buttons[pid]
                 btn.setChecked(True)
-                btn.setIcon(QIcon(self._pix_on["playlist"]))

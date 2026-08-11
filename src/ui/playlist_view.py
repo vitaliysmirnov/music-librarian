@@ -24,12 +24,13 @@ COL_NUM    = 0
 COL_ARTIST = 1
 COL_TITLE  = 2
 COL_ALBUM  = 3
-COL_DATE   = 4
-COL_DUR    = 5
-COL_LIKE   = 6
+COL_CATNO  = 4
+COL_DATE   = 5
+COL_DUR    = 6
+COL_LIKE   = 7
 
-_HEADERS = ["#", "Artist", "Title", "Album", "Date Added", "Duration", "♥"]
-_WIDTHS  = [32, 160, 200, 160, 100, 60, 28]
+_HEADERS = ["#", "Artist", "Track", "Release", "Cat. No.", "Date Added", "Duration", "♥"]
+_WIDTHS  = [32, 160, 200, 160, 90, 100, 60, 28]
 
 
 # ── Drop-line overlay ─────────────────────────────────────────────────────────
@@ -96,6 +97,7 @@ class PlaylistModel(QAbstractTableModel):
             if col == COL_ARTIST: return row.get("artist", "")
             if col == COL_TITLE:  return row.get("title", "")
             if col == COL_ALBUM:  return row.get("album", "")
+            if col == COL_CATNO:  return row.get("catalog_number", "")
             if col == COL_DATE:   return (row.get("date_added") or "")[:10]
             if col == COL_DUR:    return fmt_ms(row.get("duration_ms", 0))
             if col == COL_LIKE:   return ""
@@ -398,10 +400,12 @@ class PlaylistView(QWidget):
             self._refresh_model()
 
     def _refresh_model(self):
-        rows = [
-            dict(r) | {"is_liked": self._db.is_track_liked(r["path"])}
-            for r in self._db.get_playlist_tracks(self._playlist_id)
-        ]
+        rows = []
+        for r in self._db.get_playlist_tracks(self._playlist_id):
+            row = dict(r) | {"is_liked": self._db.is_track_liked(r["path"])}
+            release = self._db.get_release_by_path(row.get("folder_path", ""))
+            row["catalog_number"] = (dict(release).get("catalog_number") or "") if release else ""
+            rows.append(row)
         self._model.load(rows)
         n = len(rows)
         self._count_label.setText(self._name)
@@ -434,21 +438,23 @@ class PlaylistView(QWidget):
         row = self._model.get_row(index.row())
         if row and Path(row["path"]).is_file():
             release_row = {"folder_path": row["folder_path"],
-                           "title": row["album"], "artist": row["artist"]}
+                           "title": row["album"], "artist": row["artist"],
+                           "catalog_number": row.get("catalog_number", "")}
             self.play_track_requested.emit([row["path"]], release_row)
 
     def _play_selected(self):
         row = self._selected_row()
         if row and Path(row["path"]).is_file():
             release_row = {"folder_path": row["folder_path"],
-                           "title": row["album"], "artist": row["artist"]}
+                           "title": row["album"], "artist": row["artist"],
+                           "catalog_number": row.get("catalog_number", "")}
             self.play_track_requested.emit([row["path"]], release_row)
 
     def _play_all(self):
         rows = [r for r in self._model._rows if Path(r["path"]).is_file()]
         if not rows:
             return
-        release_row = {"folder_path": "", "title": self._name, "artist": ""}
+        release_row = {"folder_path": "", "title": self._name, "artist": "", "catalog_number": ""}
         self.play_track_requested.emit([r["path"] for r in rows], release_row)
 
     def _enqueue_selected(self):
@@ -457,7 +463,8 @@ class PlaylistView(QWidget):
         if paths:
             first = rows[0]
             release_row = {"folder_path": first["folder_path"],
-                           "title": first["album"], "artist": first["artist"]}
+                           "title": first["album"], "artist": first["artist"],
+                           "catalog_number": first.get("catalog_number", "")}
             self.enqueue_track_requested.emit(paths, release_row)
 
     def _toggle_like_at(self, model_index: QModelIndex):

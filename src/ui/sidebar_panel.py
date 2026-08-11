@@ -1,8 +1,9 @@
-from PySide6.QtCore import Qt, QPointF, QRectF, QSize, Signal
-from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import Qt, QByteArray, QMimeData, QPoint, QPointF, QRectF, QSize, Signal
+from PySide6.QtGui import QBrush, QColor, QDrag, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
-_ICON_PX = 14   # logical icon size (points)
+_ICON_PX      = 14   # logical icon size (points)
+_REORDER_MIME = "application/x-sidebar-playlist-id"
 
 _NAV_ITEMS = [
     (None,       "Library",  "section"),
@@ -126,7 +127,8 @@ class _PlaylistButton(QPushButton):
 
     def __init__(self, playlist_id: int, name: str, parent=None):
         super().__init__(name, parent)
-        self._playlist_id = playlist_id
+        self._playlist_id  = playlist_id
+        self._drag_start: QPoint | None = None
         self.setAcceptDrops(True)
         self.setProperty("isPlaylist", "true")
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -137,6 +139,33 @@ class _PlaylistButton(QPushButton):
         act_delete = menu.addAction("Delete Playlist")
         if menu.exec(self.mapToGlobal(pos)) == act_delete:
             self.delete_requested.emit(self._playlist_id)
+
+    # ── Drag initiation ───────────────────────────────────────────────────
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (self._drag_start is not None
+                and (event.buttons() & Qt.MouseButton.LeftButton)
+                and (event.pos() - self._drag_start).manhattanLength()
+                    >= QApplication.startDragDistance()):
+            self._drag_start = None
+            mime = QMimeData()
+            mime.setData(_REORDER_MIME, QByteArray(str(self._playlist_id).encode()))
+            drag = QDrag(self)
+            drag.setMimeData(mime)
+            drag.exec(Qt.DropAction.MoveAction)
+            return  # button may be deleted by the time drag.exec() returns
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_start = None
+        super().mouseReleaseEvent(event)
+
+    # ── URL drop target (tracks → playlist) ───────────────────────────────
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -164,13 +193,104 @@ class _PlaylistButton(QPushButton):
             event.ignore()
 
 
+# ── Playlist reorder container ────────────────────────────────────────────────
+
+class _PlaylistsContainer(QWidget):
+    """VBox container for playlist buttons; accepts internal reorder drops."""
+    reordered = Signal(list)   # new list of playlist ids in order
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self._drop_y = -1
+
+    def _buttons(self) -> list[_PlaylistButton]:
+        lo = self.layout()
+        return [lo.itemAt(i).widget() for i in range(lo.count())
+                if isinstance(lo.itemAt(i).widget(), _PlaylistButton)]
+
+    def _insert_idx_at(self, y: int) -> int:
+        for i, btn in enumerate(self._buttons()):
+            if y < btn.geometry().center().y():
+                return i
+        return len(self._buttons())
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat(_REORDER_MIME):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat(_REORDER_MIME):
+            self._drop_y = int(event.position().y())
+            self.update()
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self._drop_y = -1
+        self.update()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        self._drop_y = -1
+        self.update()
+        if not event.mimeData().hasFormat(_REORDER_MIME):
+            event.ignore()
+            return
+        try:
+            src_id = int(event.mimeData().data(_REORDER_MIME).toStdString())
+        except Exception:
+            event.ignore()
+            return
+        buttons = self._buttons()
+        insert_at = self._insert_idx_at(int(event.position().y()))
+        old_ids = [b._playlist_id for b in buttons]
+        if src_id not in old_ids:
+            event.ignore()
+            return
+        old_idx = old_ids.index(src_id)
+        new_ids = [pid for pid in old_ids if pid != src_id]
+        dest = insert_at if insert_at <= old_idx else insert_at - 1
+        new_ids.insert(dest, src_id)
+        if new_ids != old_ids:
+            self.reordered.emit(new_ids)
+        event.acceptProposedAction()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._drop_y < 0:
+            return
+        buttons = self._buttons()
+        if not buttons:
+            return
+        insert_at = self._insert_idx_at(self._drop_y)
+        if insert_at < len(buttons):
+            y = buttons[insert_at].geometry().top()
+        else:
+            y = buttons[-1].geometry().bottom()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(QPen(QColor("#3875d7"), 2))
+        r = 3
+        x1, x2 = 8, self.width() - 8
+        p.drawLine(x1, y, x2, y)
+        p.setBrush(QColor("#3875d7"))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(x1 - r, y - r, r * 2, r * 2)
+        p.drawEllipse(x2 - r, y - r, r * 2, r * 2)
+
+
 # ── Sidebar widget ─────────────────────────────────────────────────────────────
 
 class SidebarPanel(QWidget):
-    nav_changed                = Signal(str)
-    add_playlist_requested     = Signal()
-    delete_playlist_requested  = Signal(int)          # playlist_id
-    tracks_dropped_on_playlist = Signal(int, list)    # playlist_id, list[QUrl]
+    nav_changed                 = Signal(str)
+    add_playlist_requested      = Signal()
+    delete_playlist_requested   = Signal(int)          # playlist_id
+    reorder_playlists_requested = Signal(list)         # new ordered list of playlist ids
+    tracks_dropped_on_playlist  = Signal(int, list)    # playlist_id, list[QUrl]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -240,8 +360,9 @@ class SidebarPanel(QWidget):
         pl_hdr_l.addWidget(add_btn)
         layout.addWidget(pl_hdr)
 
-        # ── Playlist buttons container (scrollable) ───────────────────────
-        self._playlists_container = QWidget()
+        # ── Playlist buttons container (scrollable, reorderable) ─────────
+        self._playlists_container = _PlaylistsContainer()
+        self._playlists_container.reordered.connect(self.reorder_playlists_requested)
         self._playlists_layout = QVBoxLayout(self._playlists_container)
         self._playlists_layout.setContentsMargins(0, 0, 0, 0)
         self._playlists_layout.setSpacing(1)

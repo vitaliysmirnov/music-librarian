@@ -193,6 +193,11 @@ class Database:
             if row and row["value"] == old:
                 c.execute("UPDATE settings SET value=? WHERE key='folder_mask'", (new,))
 
+            pl_cols = [r[1] for r in c.execute("PRAGMA table_info(playlists)").fetchall()]
+            if "position" not in pl_cols:
+                c.execute("ALTER TABLE playlists ADD COLUMN position INTEGER NOT NULL DEFAULT 0")
+                c.execute("UPDATE playlists SET position = id")
+
         # Rename cover files from NFD-keyed to NFC-keyed names — runs after the
         # DB transaction commits so a filesystem error here cannot roll it back.
         try:
@@ -497,16 +502,24 @@ class Database:
 
     def create_playlist(self, name: str) -> int:
         with self.conn() as c:
+            max_pos = c.execute("SELECT COALESCE(MAX(position) + 1, 0) FROM playlists").fetchone()[0]
             return c.execute(
-                "INSERT INTO playlists (name, date_created) VALUES (?, ?)",
-                (name, datetime.now().isoformat(timespec="seconds")),
+                "INSERT INTO playlists (name, date_created, position) VALUES (?, ?, ?)",
+                (name, datetime.now().isoformat(timespec="seconds"), max_pos),
             ).lastrowid
 
     def get_playlists(self) -> list:
         with self.conn() as c:
             return c.execute(
-                "SELECT id, name, date_created FROM playlists ORDER BY date_created"
+                "SELECT id, name, date_created, position FROM playlists ORDER BY position, id"
             ).fetchall()
+
+    def reorder_playlists(self, ordered_ids: list[int]) -> None:
+        with self.conn() as c:
+            c.executemany(
+                "UPDATE playlists SET position = ? WHERE id = ?",
+                [(pos, pid) for pos, pid in enumerate(ordered_ids)],
+            )
 
     def get_playlist(self, playlist_id: int) -> dict | None:
         with self.conn() as c:

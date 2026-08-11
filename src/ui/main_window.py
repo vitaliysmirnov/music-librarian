@@ -136,6 +136,8 @@ class MainWindow(QMainWindow):
         self._releases_tab.release_trashed.connect(self._update_info_label)
         self._releases_tab.play_requested.connect(self._player_engine.play_release)
         self._releases_tab.enqueue_requested.connect(self._player_engine.enqueue_release)
+        self._releases_tab.play_track_requested.connect(self._player_engine.play_tracks)
+        self._releases_tab.enqueue_track_requested.connect(self._player_engine.enqueue_tracks)
         self._player_bar.navigate_requested.connect(self._on_navigate_requested)
 
         sb = QStatusBar()

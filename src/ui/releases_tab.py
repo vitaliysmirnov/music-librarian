@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from src.scanner.mask import DEFAULT_MASK, KNOWN_TOKENS, get_custom_tokens
 from src.ui.edit_release_dialog import EditReleaseDialog
+from src.ui.tracklist_popup import TracklistPopup
 from src.ui.sidebar_panel import SidebarPanel
 from src.ui.style import ROW_HEIGHT, TABLE_STYLE, SEARCH_STYLE
 
@@ -66,10 +67,9 @@ _AUDIO_EXTENSIONS = {
 }
 
 _NAV_PAGE = {
-    "recent":    0,
-    "releases":  1,
-    "liked":     2,
-    "playlists": 3,
+    "releases":  0,
+    "liked":     1,
+    "playlists": 2,
 }
 
 
@@ -417,10 +417,11 @@ class _MultiSortProxy(QSortFilterProxyModel):
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
         src = self._src()
-        avail_col = src._col_avail()
 
         left_row  = src.data(src.index(left.row(),  COL_PLAY), Qt.UserRole)
         right_row = src.data(src.index(right.row(), COL_PLAY), Qt.UserRole)
+
+        avail_col = src._col_avail()
 
         def val(index: QModelIndex, col: int) -> tuple:
             if col == avail_col:
@@ -548,30 +549,57 @@ def _make_stub(title: str) -> QWidget:
     return w
 
 
-class _RecentlyAddedPage(QWidget):
-    def __init__(self, db, play_cb=None, parent=None):
-        super().__init__(parent)
-        self._db = db
-        self._play_cb = play_cb
-        self._setup_ui()
+class _ReleasesView(QWidget):
+    """Unified releases table — shared by Recently Added and Releases."""
 
-    def _setup_ui(self):
+    play_requested            = Signal(dict)
+    enqueue_requested         = Signal(dict)
+    play_track_requested      = Signal(list)
+    enqueue_track_requested   = Signal(list)
+    release_trashed           = Signal()
+    column_visibility_changed = Signal(int, bool)  # logical_idx, hidden
+
+    def __init__(self, db, query_fn, *,
+                 sortable: bool = True,
+                 expandable: bool = True,
+                 show_bottom_bar: bool = True,
+                 count_label_fn=None,
+                 settings_key: str = SETTINGS_KEY,
+                 parent=None):
+        super().__init__(parent)
+        self._db             = db
+        self._query_fn       = query_fn
+        self._sortable       = sortable
+        self._expandable     = expandable
+        self._settings_key   = settings_key
+        self._expanded: set[str] = set()
+        self._header_state: QByteArray | None = None
+        self._tracklist_popup: "TracklistPopup | None" = None
+        self._count_label_fn = count_label_fn or (lambda n: f"Releases: {n}")
+        self._setup_ui(show_bottom_bar)
+
+    # ── UI setup ──────────────────────────────────────────────────────────────
+
+    def _setup_ui(self, show_bottom_bar: bool):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         self._model = ReleasesModel()
-        self._proxy = QIdentityProxyModel()
+        self._proxy = _MultiSortProxy() if self._sortable else QIdentityProxyModel()
         self._proxy.setSourceModel(self._model)
 
         self._table = _DragTableView()
         self._table.setModel(self._proxy)
-        self._table.setSortingEnabled(False)
+        self._table.setSortingEnabled(self._sortable)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setAlternatingRowColors(False)
         self._table.setShowGrid(False)
         self._table.setStyleSheet(TABLE_STYLE)
+        self._table.doubleClicked.connect(self._on_double_click)
+        self._table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._show_context_menu)
         vhdr = self._table.verticalHeader()
         vhdr.setVisible(False)
         vhdr.setDefaultSectionSize(ROW_HEIGHT)
@@ -583,112 +611,438 @@ class _RecentlyAddedPage(QWidget):
 
         self._delegate = _PlayButtonDelegate(
             self._db,
+            toggle_expand_cb=self._toggle_expand if self._expandable else None,
             proxy=self._proxy,
             artist_col_fn=lambda: self._model.col_for_token("artist"),
-            play_cb=self._play_cb,
+            play_cb=self._on_play_button,
             parent=self._table,
         )
         self._table.setItemDelegate(self._delegate)
 
         self._sep_header = _SeparatorHeader(self._table)
         self._table.setHorizontalHeader(self._sep_header)
-
         hdr = self._sep_header
         hdr.setSectionsMovable(True)
-        hdr.setSectionsClickable(False)
+        hdr.setSectionsClickable(self._sortable)
+        hdr.setSortIndicatorShown(False)
         hdr.setStretchLastSection(False)
         hdr.setSectionResizeMode(QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
         hdr.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         hdr.sectionResized.connect(self._save_header_state)
-        hdr.sectionMoved.connect(self._save_header_state)
+        hdr.setContextMenuPolicy(Qt.CustomContextMenu)
+        hdr.customContextMenuRequested.connect(self._show_header_menu)
+        if self._sortable:
+            hdr.sectionMoved.connect(self._on_section_moved)
+            hdr.sectionClicked.connect(self._on_header_clicked)
+        else:
+            hdr.sectionMoved.connect(self._save_header_state)
 
         layout.addWidget(self._table)
 
+        if show_bottom_bar:
+            trash_sc = QShortcut(QKeySequence("Ctrl+Backspace"), self._table)
+            trash_sc.setContext(Qt.WidgetWithChildrenShortcut)
+            trash_sc.activated.connect(self._trash_release)
+
+        bottom_bar = QWidget()
+        bb = QHBoxLayout(bottom_bar)
+        bb.setContentsMargins(8, 4, 8, 4)
+        bb.setSpacing(4)
+
+        if show_bottom_bar:
+            edit_btn = QPushButton("Release Info")
+            edit_btn.setToolTip("View/edit release info (double-click)")
+            edit_btn.clicked.connect(self._edit_release)
+            bb.addWidget(edit_btn)
+            open_btn = QPushButton("Open Folder")
+            open_btn.clicked.connect(self._open_release)
+            bb.addWidget(open_btn)
+            bb.addStretch()
+
         self._count_label = QLabel("")
-        self._count_label.setStyleSheet(
-            "font-size: 11px; color: palette(placeholderText); padding: 4px 12px;"
+        self._count_label.setStyleSheet("font-size: 11px;")
+        bb.addWidget(self._count_label)
+        bb.addStretch()
+
+        if show_bottom_bar:
+            drag_hint = QLabel("▶ to play · drag to player")
+            drag_hint.setStyleSheet("color: palette(placeholderText); font-size: 11px;")
+            bb.addWidget(drag_hint)
+
+        reset_btn = QPushButton("Reset View")
+        reset_btn.setToolTip("Restore default column order and widths")
+        reset_btn.clicked.connect(self._reset_header)
+        bb.addWidget(reset_btn)
+
+        layout.addWidget(bottom_bar)
+
+    # ── Play button ───────────────────────────────────────────────────────────
+
+    def _on_play_button(self, row: dict):
+        self.play_requested.emit(row)
+
+    # ── Selection ─────────────────────────────────────────────────────────────
+
+    def _selected_row(self) -> dict | None:
+        indexes = self._table.selectionModel().selectedRows()
+        if not indexes:
+            return None
+        source_row = self._proxy.mapToSource(indexes[0]).row()
+        return self._model.get_row(source_row)
+
+    # ── Double-click ──────────────────────────────────────────────────────────
+
+    def _on_double_click(self, proxy_index):
+        if proxy_index.column() == COL_PLAY:
+            return
+        self._show_tracklist()
+
+    # ── Tracklist ─────────────────────────────────────────────────────────────
+
+    def _show_tracklist(self):
+        row = self._selected_row()
+        if not row:
+            return
+        if self._tracklist_popup is not None:
+            self._tracklist_popup.close()
+        self._tracklist_popup = TracklistPopup(row, self._db, self.window())
+        self._tracklist_popup.play_track.connect(self.play_track_requested)
+        self._tracklist_popup.enqueue_track.connect(self.enqueue_track_requested)
+        self._tracklist_popup.finished.connect(lambda: setattr(self, "_tracklist_popup", None))
+        self._tracklist_popup.show()
+
+    # ── Row context menu ───────────────────────────────────────────────────────
+
+    def _show_context_menu(self, pos):
+        proxy_index = self._table.indexAt(pos)
+        if not proxy_index.isValid():
+            return
+        self._table.selectionModel().setCurrentIndex(
+            proxy_index,
+            self._table.selectionModel().SelectionFlag.ClearAndSelect |
+            self._table.selectionModel().SelectionFlag.Rows,
         )
-        layout.addWidget(self._count_label)
+        row = self._selected_row()
+        if not row:
+            return
+
+        available    = bool(row["is_available"])
+        is_container = bool(row.get("is_multi_disc"))
+        player_path  = self._db.get_setting("audio_player_path", "").strip()
+
+        menu = QMenu(self)
+
+        act_play_now = menu.addAction("Play Now")
+        act_play_now.setEnabled(available and not is_container)
+        act_enqueue = menu.addAction("Add to Queue")
+        act_enqueue.setEnabled(available and not is_container)
+
+        if player_path:
+            menu.addSeparator()
+            player_name = Path(player_path.rstrip("/")).stem or player_path
+            act_play = menu.addAction(f"Play with {player_name}")
+            act_play.setEnabled(available and not is_container)
+        else:
+            act_play = None
+
+        menu.addSeparator()
+        act_open = menu.addAction("Open Folder")
+        act_open.setEnabled(available)
+
+        menu.addSeparator()
+        act_edit = menu.addAction("Release Info")
+        act_edit.setEnabled(available)
+        act_tracklist = menu.addAction("Tracklist")
+        act_tracklist.setEnabled(available)
+
+        menu.addSeparator()
+        act_delete = menu.addAction("Move to Trash")
+
+        chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
+        if chosen is None:
+            return
+        if chosen == act_play_now:
+            self.play_requested.emit(row)
+        elif chosen == act_enqueue:
+            self.enqueue_requested.emit(row)
+        elif chosen == act_play:
+            _play_release(row["folder_path"], player_path)
+        elif chosen == act_open:
+            self._open_release()
+        elif chosen == act_edit:
+            self._edit_release()
+        elif chosen == act_tracklist:
+            self._show_tracklist()
+        elif chosen == act_delete:
+            self._trash_release()
+
+    # ── Header context menu ────────────────────────────────────────────────────
+
+    def _show_header_menu(self, pos):
+        hdr = self._table.horizontalHeader()
+        headers = self._model._all_headers()
+        menu = QMenu(self)
+        for logical_idx, name in enumerate(headers):
+            if logical_idx == COL_PLAY:
+                continue
+            label = name if name else f"Column {logical_idx}"
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(not hdr.isSectionHidden(logical_idx))
+            action.setData(logical_idx)
+        chosen = menu.exec(hdr.mapToGlobal(pos))
+        if chosen is not None:
+            logical_idx = chosen.data()
+            hidden = not chosen.isChecked()
+            hdr.setSectionHidden(logical_idx, hidden)
+            self._save_header_state()
+            self.column_visibility_changed.emit(logical_idx, hidden)
+
+    def _apply_column_visibility(self, logical_idx: int, hidden: bool):
+        hdr = self._sep_header
+        if logical_idx < self._model.columnCount() and hdr.isSectionHidden(logical_idx) != hidden:
+            hdr.setSectionHidden(logical_idx, hidden)
+            self._save_header_state()
+
+    # ── Header state ───────────────────────────────────────────────────────────
+
+    def _on_section_moved(self, logical, old_visual, new_visual):
+        hdr = self._sep_header
+        try:
+            artist_col = self._model.col_for_token("artist")
+        except (ValueError, IndexError):
+            artist_col = -1
+
+        fixed = {COL_PLAY, artist_col} if artist_col >= 0 else {COL_PLAY}
+
+        if logical == COL_PLAY and new_visual != 1:
+            hdr.moveSection(new_visual, 1)
+            return
+        if artist_col >= 0 and logical == artist_col and new_visual != 0:
+            hdr.moveSection(new_visual, 0)
+            return
+        if new_visual in (0, 1) and logical not in fixed:
+            hdr.moveSection(new_visual, old_visual)
+            return
+        self._save_header_state()
+
+    def _on_header_clicked(self, logical: int):
+        if logical == COL_PLAY:
+            col = self._proxy._primary_col
+            if col is None or col == COL_PLAY:
+                col = COL_PLAY + 1
+            self._table.horizontalHeader().setSortIndicator(col, self._proxy._primary_order)
+
+    def _save_header_state(self, *_):
+        state: QByteArray = self._table.horizontalHeader().saveState()
+        if self._header_state is not None and state == self._header_state:
+            return
+        self._header_state = state
+        self._db.set_setting(self._settings_key, state.toBase64().data().decode())
+
+    def _restore_header_state(self):
+        if self._header_state is None:
+            raw = self._db.get_setting(self._settings_key, "")
+            if not raw:
+                return
+            try:
+                self._header_state = QByteArray.fromBase64(raw.encode())
+            except Exception:
+                return
+        try:
+            self._sep_header.restoreState(self._header_state)
+        except Exception:
+            pass
+        hdr = self._sep_header
+        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
+        hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
+        try:
+            artist_col = self._model.col_for_token("artist")
+            if hdr.visualIndex(artist_col) != 0 or hdr.visualIndex(COL_PLAY) != 1:
+                self._apply_canonical_visual_order()
+                self._save_header_state()
+            else:
+                self._sep_header.set_separator_column(artist_col)
+        except (ValueError, IndexError):
+            pass
+        if self._sortable and hdr.sortIndicatorSection() == COL_PLAY:
+            hdr.setSortIndicator(COL_PLAY + 1, Qt.AscendingOrder)
+            self._save_header_state()
+
+    def sync_header(self):
+        """Re-apply header state without reloading data (call when switching to this view)."""
+        if self._model.columnCount() == 0:
+            return
+        self._restore_header_state()
+
+    def invalidate_header_cache(self):
+        self._header_state = None
+
+    def invalidate_header_state(self):
+        self._header_state = None
+        self._db.set_setting(self._settings_key, "")
+
+    def _reset_header(self):
+        self._apply_default_widths()
+        hdr = self._sep_header
+        for i in range(self._model.columnCount()):
+            hdr.setSectionHidden(i, False)
+        self._save_header_state()
+
+    def _apply_canonical_visual_order(self):
+        """Set Artist at visual 0, PLAY at visual 1 without triggering section-moved constraints."""
+        hdr = self._sep_header
+        try:
+            artist_col = self._model.col_for_token("artist")
+        except (ValueError, IndexError):
+            return
+        if self._sortable:
+            hdr.sectionMoved.disconnect(self._on_section_moved)
+        try:
+            n = self._model.columnCount()
+            for logical in range(n):
+                vis = hdr.visualIndex(logical)
+                if vis != logical:
+                    hdr.moveSection(vis, logical)
+            hdr.moveSection(hdr.visualIndex(artist_col), 0)
+        finally:
+            if self._sortable:
+                hdr.sectionMoved.connect(self._on_section_moved)
+        self._sep_header.set_separator_column(artist_col)
+
+    def _apply_default_widths(self):
+        hdr = self._sep_header
+        self._apply_canonical_visual_order()
+        hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
+        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
+        for i, tok in enumerate(self._model._token_order):
+            hdr.resizeSection(1 + i, _TOKEN_WIDTH.get(tok, 100))
+        n_kn = self._model._n_known()
+        for i in range(len(self._model._extra_tokens)):
+            hdr.resizeSection(1 + n_kn + i, _EXTRA_DEFAULT_WIDTH)
+        for i, w in enumerate(_TAIL_WIDTHS):
+            hdr.resizeSection(1 + n_kn + len(self._model._extra_tokens) + i, w)
+
+    # ── Expand / collapse ─────────────────────────────────────────────────────
+
+    def _toggle_expand(self, folder_path: str):
+        if folder_path in self._expanded:
+            self._expanded.discard(folder_path)
+        else:
+            self._expanded.add(folder_path)
+        self.refresh()
+
+    # ── Release actions ────────────────────────────────────────────────────────
+
+    def _edit_release(self, *_):
+        row = self._selected_row()
+        if not row or not row["is_available"]:
+            return
+        dlg = EditReleaseDialog(self._db, row, self)
+        if dlg.exec() == EditReleaseDialog.Accepted:
+            self.refresh()
+
+    def _open_release(self, *_):
+        row = self._selected_row()
+        if not row or not row["is_available"]:
+            return
+        p = row["folder_path"]
+        if platform.system() == "Darwin":
+            subprocess.Popen(["open", p])
+        elif platform.system() == "Windows":
+            os.startfile(p)
+        else:
+            subprocess.Popen(["xdg-open", p])
+
+    def _trash_release(self):
+        row = self._selected_row()
+        if not row:
+            return
+        if row.get("_is_disc_child"):
+            QMessageBox.information(
+                self, "Move to Trash",
+                "Select the parent release to delete a multi-disc release."
+            )
+            return
+        folder_path   = row["folder_path"]
+        folder_exists = Path(folder_path).exists()
+        artist = row.get("artist", "")
+        title  = row.get("title", "")
+        label  = f"{artist} — {title}" if artist and title else folder_path
+
+        if folder_exists:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Move to Trash")
+            msg.setText(f"Move to Trash:\n{label}")
+            msg.setInformativeText("The folder will be moved to the Trash. This can be undone.")
+            msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+            msg.setDefaultButton(QMessageBox.Cancel)
+            if msg.exec() != QMessageBox.Ok:
+                return
+            try:
+                _move_to_trash(folder_path)
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Could not move to Trash:\n{e}")
+                return
+
+        self._db.delete_release_by_path(folder_path)
+        self.refresh()
+        self.release_trashed.emit()
+
+    # ── Data ──────────────────────────────────────────────────────────────────
 
     def refresh(self, token_order: list | None = None, extra_tokens: list | None = None):
         if token_order is None:
             mask = self._db.get_setting("folder_mask", DEFAULT_MASK)
-            token_order = _known_token_order(mask)
+            token_order  = _known_token_order(mask)
             extra_tokens = get_custom_tokens(mask)
         extra_tokens = extra_tokens or []
 
-        rows = self._db.get_recent_releases(50)
-        flat = [dict(r) for r in rows]
+        top_rows = list(self._query_fn())
+
+        if self._expandable:
+            flat: list[dict] = []
+            for raw in top_rows:
+                row = dict(raw)
+                if row.get("is_multi_disc"):
+                    expanded = row["folder_path"] in self._expanded
+                    row["_is_expanded"] = expanded
+                    flat.append(row)
+                    if expanded:
+                        for child_raw in self._db.get_disc_entries(row["folder_path"]):
+                            child = dict(child_raw)
+                            child["_is_disc_child"] = True
+                            flat.append(child)
+                else:
+                    row["_is_expanded"] = False
+                    flat.append(row)
+        else:
+            flat = [dict(r) for r in top_rows]
+
+        prev_n = self._model.columnCount()
         self._model.load(flat, token_order, extra_tokens)
-
-        self._restore_header_state(token_order, extra_tokens)
-
-        self._count_label.setText(
-            f"Showing {len(rows)} most recently added release{'s' if len(rows) != 1 else ''}"
-        )
-
-    def sync_header_from_db(self):
-        if self._model.columnCount() == 0:
-            return
-        mask = self._db.get_setting("folder_mask", DEFAULT_MASK)
-        token_order = _known_token_order(mask)
-        extra_tokens = get_custom_tokens(mask)
-        self._restore_header_state(token_order, extra_tokens)
-
-    def _save_header_state(self, *_):
-        state: QByteArray = self._sep_header.saveState()
-        self._db.set_setting(SETTINGS_KEY, state.toBase64().data().decode())
-
-    def _restore_header_state(self, token_order, extra_tokens):
-        hdr = self._sep_header
-        hdr.blockSignals(True)
-        try:
-            raw = self._db.get_setting(SETTINGS_KEY, "")
-            if raw:
-                try:
-                    state = QByteArray.fromBase64(raw.encode())
-                    hdr.restoreState(state)
-                    hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
-                    hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
-                    try:
-                        artist_col = self._model.col_for_token("artist")
-                        self._sep_header.set_separator_column(artist_col)
-                    except (ValueError, IndexError):
-                        pass
-                    return
-                except Exception:
-                    pass
-            # fallback: apply default widths
-            hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
-            hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
-            for i, tok in enumerate(token_order):
-                hdr.resizeSection(1 + i, _TOKEN_WIDTH.get(tok, 100))
-            n_kn = len(token_order)
-            for i in range(len(extra_tokens)):
-                hdr.resizeSection(1 + n_kn + i, _EXTRA_DEFAULT_WIDTH)
-            for i, w in enumerate(_TAIL_WIDTHS):
-                hdr.resizeSection(1 + n_kn + len(extra_tokens) + i, w)
-            try:
-                artist_col = self._model.col_for_token("artist")
-                self._sep_header.set_separator_column(artist_col)
-            except (ValueError, IndexError):
-                pass
-        finally:
-            hdr.blockSignals(False)
+        if self._model.columnCount() != prev_n:
+            self._apply_default_widths()
+        else:
+            self._restore_header_state()
+        hdr = self._table.horizontalHeader()
+        hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
+        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
+        self._count_label.setText(self._count_label_fn(len(top_rows)))
 
 
 class ReleasesTab(QWidget):
-    release_trashed  = Signal()
-    play_requested   = Signal(dict)
-    enqueue_requested = Signal(dict)
+    release_trashed         = Signal()
+    play_requested          = Signal(dict)
+    enqueue_requested       = Signal(dict)
+    play_track_requested    = Signal(list)
+    enqueue_track_requested = Signal(list)
 
     def __init__(self, db):
         super().__init__()
         self._db = db
-        self._expanded: set[str] = set()
-        self._header_state: QByteArray | None = None  # in-memory cache
         self._setup_ui()
-        self._restore_header_state()
 
     def _setup_ui(self):
         outer = QHBoxLayout(self)
@@ -736,122 +1090,29 @@ class ReleasesTab(QWidget):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([170, 900])
 
-        self._recent_page = _RecentlyAddedPage(self._db, play_cb=self._on_play_clicked)
-        self._stack.addWidget(self._recent_page)                   # 0
+        self._releases_view = _ReleasesView(
+            self._db,
+            lambda: self._db.get_releases(search=self._search.text().strip()),
+            sortable=True,
+            expandable=True,
+            show_bottom_bar=True,
+            count_label_fn=lambda n: f"Releases: {n}",
+        )
+        self._releases_view.play_requested.connect(self.play_requested)
+        self._releases_view.enqueue_requested.connect(self.enqueue_requested)
+        self._releases_view.play_track_requested.connect(self.play_track_requested)
+        self._releases_view.enqueue_track_requested.connect(self.enqueue_track_requested)
+        self._releases_view.release_trashed.connect(self.release_trashed)
 
-        self._stack.addWidget(self._create_albums_widget())        # 1  releases
-        self._stack.addWidget(_make_stub("Liked"))                 # 2
-        self._stack.addWidget(_make_stub("All Playlists"))         # 3
+        self._stack.addWidget(self._releases_view)             # 0  releases
+        self._stack.addWidget(_make_stub("Liked"))             # 1
+        self._stack.addWidget(_make_stub("All Playlists"))     # 2
 
         self._sidebar.nav_changed.connect(self._on_nav)
-        self._sidebar.set_current("recent")
-        self._stack.setCurrentIndex(_NAV_PAGE["recent"])
+        self._sidebar.set_current("releases")
+        self._stack.setCurrentIndex(_NAV_PAGE["releases"])
 
-    def _create_albums_widget(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # ── Table ─────────────────────────────────────────────────────────
-        self._model = ReleasesModel()
-        self._proxy = _MultiSortProxy()
-        self._proxy.setSourceModel(self._model)
-
-        self._table = _DragTableView()
-        self._table.setModel(self._proxy)
-        self._table.setSortingEnabled(True)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._table.setAlternatingRowColors(False)
-        self._table.setShowGrid(False)
-        self._table.setStyleSheet(TABLE_STYLE)
-        self._table.doubleClicked.connect(self._on_double_click)
-        vhdr = self._table.verticalHeader()
-        vhdr.setVisible(False)
-        vhdr.setDefaultSectionSize(ROW_HEIGHT)
-        vhdr.setMinimumSectionSize(ROW_HEIGHT)
-        self._table.setDragEnabled(True)
-        self._table.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
-        self._table.setDefaultDropAction(Qt.DropAction.CopyAction)
-        self._table.setMouseTracking(True)
-        self._table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self._table.customContextMenuRequested.connect(self._show_context_menu)
-
-        self._delegate = _PlayButtonDelegate(
-            self._db,
-            toggle_expand_cb=self._toggle_expand,
-            proxy=self._proxy,
-            artist_col_fn=lambda: self._model.col_for_token("artist"),
-            play_cb=self._on_play_clicked,
-            parent=self._table,
-        )
-        self._table.setItemDelegate(self._delegate)
-
-        self._sep_header = _SeparatorHeader(self._table)
-        self._table.setHorizontalHeader(self._sep_header)
-
-        hdr = self._sep_header
-        hdr.setSectionsMovable(True)
-        hdr.setSectionsClickable(True)
-        hdr.setSortIndicatorShown(False)
-        hdr.setStretchLastSection(False)
-        hdr.setSectionResizeMode(QHeaderView.Interactive)
-        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
-        hdr.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        hdr.setContextMenuPolicy(Qt.CustomContextMenu)
-        hdr.customContextMenuRequested.connect(self._show_header_menu)
-        hdr.sectionMoved.connect(self._on_section_moved)
-        hdr.sectionResized.connect(self._save_header_state)
-        hdr.sectionClicked.connect(self._on_header_clicked)
-
-        layout.addWidget(self._table)
-
-        # Cmd+Backspace / Ctrl+Backspace → move to Trash
-        trash_sc = QShortcut(QKeySequence("Ctrl+Backspace"), self._table)
-        trash_sc.setContext(Qt.WidgetWithChildrenShortcut)
-        trash_sc.activated.connect(self._trash_release)
-
-        # ── Bottom bar ────────────────────────────────────────────────────
-        bottom_bar = QWidget()
-        bb = QHBoxLayout(bottom_bar)
-        bb.setContentsMargins(8, 4, 8, 4)
-        bb.setSpacing(4)
-
-        edit_btn = QPushButton("Release Info")
-        edit_btn.setToolTip("View/edit release info (double-click)")
-        edit_btn.clicked.connect(self._edit_release)
-        bb.addWidget(edit_btn)
-
-        open_btn = QPushButton("Open Folder")
-        open_btn.clicked.connect(self._open_release)
-        bb.addWidget(open_btn)
-
-        bb.addStretch()
-
-        self._count_label = QLabel("")
-        self._count_label.setStyleSheet("font-size: 11px;")
-        bb.addWidget(self._count_label)
-
-        bb.addStretch()
-
-        drag_hint = QLabel("▶ to play · drag to player")
-        drag_hint.setStyleSheet("color: palette(placeholderText); font-size: 11px;")
-        bb.addWidget(drag_hint)
-
-        reset_btn = QPushButton("Reset View")
-        reset_btn.setToolTip("Restore default column order and widths")
-        reset_btn.clicked.connect(self._reset_header)
-        bb.addWidget(reset_btn)
-
-        layout.addWidget(bottom_bar)
-
-        return widget
-
-    def _on_play_clicked(self, row: dict):
-        self.play_requested.emit(row)
-
-    # ── Sidebar navigation ────────────────────────────────────────────────
+    # ── Sidebar navigation ────────────────────────────────────────────────────
 
     def navigate_to(self, kind: str, value: str):
         self._sidebar.set_current("releases")
@@ -860,11 +1121,9 @@ class ReleasesTab(QWidget):
 
     def _on_nav(self, key: str):
         self._stack.setCurrentIndex(_NAV_PAGE.get(key, _NAV_PAGE["releases"]))
-        if key == "recent":
-            self._recent_page.sync_header_from_db()
-        elif key == "releases":
-            self._header_state = None
-            self._restore_header_state()
+        if key == "releases":
+            self._releases_view.invalidate_header_cache()
+            self._releases_view.sync_header()
 
     def _on_search_changed(self, text: str):
         if text.strip():
@@ -872,315 +1131,13 @@ class ReleasesTab(QWidget):
             self._stack.setCurrentIndex(_NAV_PAGE["releases"])
         self.refresh()
 
-    # ── Header click ──────────────────────────────────────────────────────
-
-    def _on_header_clicked(self, logical: int):
-        if logical == COL_PLAY:
-            # Qt already moved the indicator to COL_PLAY — put it back.
-            col = self._proxy._primary_col
-            if col is None or col == COL_PLAY:
-                col = COL_PLAY + 1
-            self._table.horizontalHeader().setSortIndicator(col, self._proxy._primary_order)
-
-    # ── Double-click ───────────────────────────────────────────────────────
-
-    def _on_double_click(self, proxy_index):
-        if proxy_index.column() == COL_PLAY:
-            return
-        self._edit_release()
-
-    # ── Row context menu ───────────────────────────────────────────────────
-
-    def _show_context_menu(self, pos):
-        proxy_index = self._table.indexAt(pos)
-        if not proxy_index.isValid():
-            return
-        # Ensure the clicked row is selected
-        self._table.selectionModel().setCurrentIndex(
-            proxy_index, self._table.selectionModel().SelectionFlag.ClearAndSelect |
-            self._table.selectionModel().SelectionFlag.Rows,
-        )
-        row = self._selected_row()
-        if not row:
-            return
-
-        available = bool(row["is_available"])
-        is_container = bool(row.get("is_multi_disc"))
-        player_path = self._db.get_setting("audio_player_path", "").strip()
-
-        menu = QMenu(self)
-
-        act_play_now = menu.addAction("Play Now")
-        act_play_now.setEnabled(available and not is_container)
-        act_enqueue = menu.addAction("Add to Queue")
-        act_enqueue.setEnabled(available and not is_container)
-
-        if player_path:
-            menu.addSeparator()
-            player_name = Path(player_path.rstrip("/")).stem or player_path
-            act_play = menu.addAction(f"Play with {player_name}")
-            act_play.setEnabled(available and not is_container)
-        else:
-            act_play = None
-
-        menu.addSeparator()
-        act_open = menu.addAction("Open Folder")
-        act_open.setEnabled(available)
-
-        menu.addSeparator()
-
-        act_edit = menu.addAction("Release Info")
-        act_edit.setEnabled(available)
-
-        menu.addSeparator()
-
-        act_delete = menu.addAction("Move to Trash")
-
-        chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
-        if chosen is None:
-            return
-        if chosen == act_play_now:
-            self.play_requested.emit(row)
-        elif chosen == act_enqueue:
-            self.enqueue_requested.emit(row)
-        elif chosen == act_play:
-            _play_release(row["folder_path"], player_path)
-        elif chosen == act_open:
-            self._open_release()
-        elif chosen == act_edit:
-            self._edit_release()
-        elif chosen == act_delete:
-            self._trash_release()
-
-    # ── Header context menu ────────────────────────────────────────────────
-
-    def _show_header_menu(self, pos):
-        hdr = self._table.horizontalHeader()
-        headers = self._model._all_headers()
-        menu = QMenu(self)
-        for logical_idx, name in enumerate(headers):
-            if logical_idx == COL_PLAY:
-                continue
-            label = name if name else f"Column {logical_idx}"
-            action = menu.addAction(label)
-            action.setCheckable(True)
-            action.setChecked(not hdr.isSectionHidden(logical_idx))
-            action.setData(logical_idx)
-        chosen = menu.exec(hdr.mapToGlobal(pos))
-        if chosen is not None:
-            hdr.setSectionHidden(chosen.data(), not chosen.isChecked())
-            self._save_header_state()
-
-    # ── Header state ───────────────────────────────────────────────────────
-
-    def _on_section_moved(self, logical, old_visual, new_visual):
-        hdr = self._sep_header
-        try:
-            artist_col = self._model.col_for_token("artist")
-        except (ValueError, IndexError):
-            artist_col = -1
-
-        fixed = {COL_PLAY, artist_col} if artist_col >= 0 else {COL_PLAY}
-
-        if logical == COL_PLAY and new_visual != 1:
-            hdr.moveSection(new_visual, 1)
-            return
-        if artist_col >= 0 and logical == artist_col and new_visual != 0:
-            hdr.moveSection(new_visual, 0)
-            return
-        if new_visual in (0, 1) and logical not in fixed:
-            hdr.moveSection(new_visual, old_visual)
-            return
-        self._save_header_state()
-
-    def _save_header_state(self, *_):
-        state: QByteArray = self._table.horizontalHeader().saveState()
-        if self._header_state is not None and state == self._header_state:
-            return  # nothing changed — skip the DB write
-        self._header_state = state
-        self._db.set_setting(SETTINGS_KEY, state.toBase64().data().decode())
-
-    def _restore_header_state(self):
-        if self._header_state is None:
-            raw = self._db.get_setting(SETTINGS_KEY, "")
-            if not raw:
-                return
-            try:
-                self._header_state = QByteArray.fromBase64(raw.encode())
-            except Exception:
-                return
-        try:
-            self._sep_header.restoreState(self._header_state)
-        except Exception:
-            pass
-        hdr = self._sep_header
-        # restoreState re-applies saved resize mode and width; always override.
-        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
-        hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
-        # Ensure canonical visual order (safety net for migrated/stale states).
-        try:
-            artist_col = self._model.col_for_token("artist")
-            if hdr.visualIndex(artist_col) != 0 or hdr.visualIndex(COL_PLAY) != 1:
-                self._apply_canonical_visual_order()
-                self._save_header_state()
-            else:
-                self._sep_header.set_separator_column(artist_col)
-        except (ValueError, IndexError):
-            pass
-        # If saved state had sort indicator on COL_PLAY, move it to Artist.
-        if hdr.sortIndicatorSection() == COL_PLAY:
-            hdr.setSortIndicator(COL_PLAY + 1, Qt.AscendingOrder)
-            self._save_header_state()
-
-    def invalidate_header_state(self):
-        self._header_state = None
-        self._db.set_setting(SETTINGS_KEY, "")
-
-    def _reset_header(self):
-        self._apply_default_widths()
-        hdr = self._sep_header
-        n = self._model.columnCount()
-        for i in range(n):
-            hdr.setSectionHidden(i, False)
-        self._save_header_state()
-
-    # ── Data ───────────────────────────────────────────────────────────────
-
-    def _toggle_expand(self, folder_path: str):
-        if folder_path in self._expanded:
-            self._expanded.discard(folder_path)
-        else:
-            self._expanded.add(folder_path)
-        self.refresh()
+    # ── External API ──────────────────────────────────────────────────────────
 
     def refresh(self):
         mask = self._db.get_setting("folder_mask", DEFAULT_MASK)
         token_order  = _known_token_order(mask)
         extra_tokens = get_custom_tokens(mask)
-        self._recent_page.refresh(token_order, extra_tokens)
-        top_rows = self._db.get_releases(search=self._search.text().strip())
+        self._releases_view.refresh(token_order, extra_tokens)
 
-        flat: list[dict] = []
-        for raw in top_rows:
-            row = dict(raw)
-            if row.get("is_multi_disc"):
-                expanded = row["folder_path"] in self._expanded
-                row["_is_expanded"] = expanded
-                flat.append(row)
-                if expanded:
-                    for child_raw in self._db.get_disc_entries(row["folder_path"]):
-                        child = dict(child_raw)
-                        child["_is_disc_child"] = True
-                        flat.append(child)
-            else:
-                row["_is_expanded"] = False
-                flat.append(row)
-
-        prev_n = self._model.columnCount()
-        self._model.load(flat, token_order, extra_tokens)
-        if self._model.columnCount() != prev_n:
-            self._apply_default_widths()
-        else:
-            self._restore_header_state()
-        hdr = self._table.horizontalHeader()
-        hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
-        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
-        self._count_label.setText(f"Releases: {len(top_rows)}")
-
-    def _apply_canonical_visual_order(self):
-        """Set Artist at visual 0, PLAY at visual 1 without triggering section-moved constraints."""
-        hdr = self._sep_header
-        try:
-            artist_col = self._model.col_for_token("artist")
-        except (ValueError, IndexError):
-            return
-        hdr.sectionMoved.disconnect(self._on_section_moved)
-        try:
-            n = self._model.columnCount()
-            for logical in range(n):
-                vis = hdr.visualIndex(logical)
-                if vis != logical:
-                    hdr.moveSection(vis, logical)
-            # Artist to visual 0 → PLAY shifts to visual 1 automatically.
-            hdr.moveSection(hdr.visualIndex(artist_col), 0)
-        finally:
-            hdr.sectionMoved.connect(self._on_section_moved)
-        self._sep_header.set_separator_column(artist_col)
-
-    def _apply_default_widths(self):
-        hdr = self._sep_header
-        self._apply_canonical_visual_order()
-        hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
-        hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
-        for i, tok in enumerate(self._model._token_order):
-            hdr.resizeSection(1 + i, _TOKEN_WIDTH.get(tok, 100))
-        n_kn = self._model._n_known()
-        for i in range(len(self._model._extra_tokens)):
-            hdr.resizeSection(1 + n_kn + i, _EXTRA_DEFAULT_WIDTH)
-        for i, w in enumerate(_TAIL_WIDTHS):
-            hdr.resizeSection(1 + n_kn + len(self._model._extra_tokens) + i, w)
-
-    def _selected_row(self) -> dict | None:
-        indexes = self._table.selectionModel().selectedRows()
-        if not indexes:
-            return None
-        source_row = self._proxy.mapToSource(indexes[0]).row()
-        return self._model.get_row(source_row)
-
-    def _edit_release(self, *_):
-        row = self._selected_row()
-        if not row:
-            return
-        if not row["is_available"]:
-            return
-        dlg = EditReleaseDialog(self._db, row, self)
-        if dlg.exec() == EditReleaseDialog.Accepted:
-            self.refresh()
-
-    def _open_release(self, *_):
-        row = self._selected_row()
-        if row and row["is_available"]:
-            p = row["folder_path"]
-            if platform.system() == "Darwin":
-                subprocess.Popen(["open", p])
-            elif platform.system() == "Windows":
-                os.startfile(p)
-            else:
-                subprocess.Popen(["xdg-open", p])
-
-    def _trash_release(self):
-        row = self._selected_row()
-        if not row:
-            return
-
-        if row.get("_is_disc_child"):
-            QMessageBox.information(
-                self, "Move to Trash",
-                "Select the parent release to delete a multi-disc release."
-            )
-            return
-
-        folder_path = row["folder_path"]
-        folder_exists = Path(folder_path).exists()
-        artist = row.get("artist", "")
-        title = row.get("title", "")
-        label = f"{artist} — {title}" if artist and title else folder_path
-
-        if folder_exists:
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Move to Trash")
-            msg.setText(f"Move to Trash:\n{label}")
-            msg.setInformativeText("The folder will be moved to the Trash. This can be undone.")
-            msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-            msg.setDefaultButton(QMessageBox.Cancel)
-            if msg.exec() != QMessageBox.Ok:
-                return
-            try:
-                _move_to_trash(folder_path)
-            except Exception as e:
-                QMessageBox.warning(self, "Error", f"Could not move to Trash:\n{e}")
-                return
-
-        self._db.delete_release_by_path(folder_path)
-        self.refresh()
-        self.release_trashed.emit()
+    def invalidate_header_state(self):
+        self._releases_view.invalidate_header_state()

@@ -58,6 +58,25 @@ _SECTION_STYLE = (
     "padding: 0;"
 )
 
+_PLAYLIST_MENU_STYLE = """
+QMenu {
+    background: palette(window);
+    border: 1px solid palette(mid);
+    border-radius: 6px;
+    padding: 4px 2px;
+}
+QMenu::item {
+    padding: 5px 20px 5px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #d04040;
+}
+QMenu::item:selected {
+    background: rgba(208, 64, 64, 0.15);
+    color: #d04040;
+}
+"""
+
 
 # ── Icon drawing ───────────────────────────────────────────────────────────────
 
@@ -136,6 +155,7 @@ class _PlaylistButton(QPushButton):
 
     def _on_context_menu(self, pos):
         menu = QMenu(self)
+        menu.setStyleSheet(_PLAYLIST_MENU_STYLE)
         act_delete = menu.addAction("Delete Playlist")
         if menu.exec(self.mapToGlobal(pos)) == act_delete:
             self.delete_requested.emit(self._playlist_id)

@@ -2,8 +2,6 @@
 
 A desktop music library manager for collections organised as folders on disk. Built with Python and PySide6.
 
-> **Note:** App icons are currently placeholders (checkerboard pattern). Final icons will be added in a future release.
-
 ![Screenshot](assets/screenshot.png)
 
 ---
@@ -116,12 +114,38 @@ On macOS, `pyobjc-framework-Cocoa` is required (already in `requirements.txt`) f
 
 ---
 
+## Updating icons
+
+### Main app icon
+
+Edit `assets/icon.svg`, then run:
+
+```bash
+# Requires: pip install cairosvg pillow
+DYLD_LIBRARY_PATH="$(brew --prefix cairo)/lib" python -c \
+  "import cairosvg; cairosvg.svg2png(url='assets/icon.svg', write_to='assets/icon.png', output_width=1024, output_height=1024)"
+python assets/gen_icons.py   # produces icon.icns, icon.ico, tray.png
+```
+
+`gen_icons.py` reads `assets/icon.png` (1024×1024 RGBA master) and outputs:
+- `assets/icon.icns` — macOS bundle icon
+- `assets/icon.ico` — Windows multi-size icon
+- `assets/icon.iconset/` — individual PNG sizes (gitignored)
+
+### Tray icon
+
+The tray icon (`assets/tray.png`, 44×44 RGBA) is generated automatically by `gen_icons.py` from the drawing code in `_make_tray()` at the bottom of that script. Edit that function to change the tray icon, then re-run `gen_icons.py`.
+
+On macOS the tray icon is drawn in **white on transparent** so the system can apply a dark/light template tint automatically.
+
+---
+
 ## Building a distributable
 
 ```bash
 pip install -r requirements-dev.txt
-python assets/gen_icons.py       # generate placeholder icons (skip if you have real icons)
-python build.py                  # produces dist/*.dmg (macOS) or dist/*.zip (Windows)
+python assets/gen_icons.py   # regenerate icons from assets/icon.png
+python build.py              # produces dist/*.dmg (macOS) or dist/*.zip (Windows)
 ```
 
 `build.py` calls PyInstaller with the spec in `music_librarian.spec`, then packages the output.

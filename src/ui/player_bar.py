@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.ui.player_engine import PlayerEngine
+from src.utils import fmt_ms as _fmt_ms
 
 
 class _LinkLabel(QLabel):
@@ -162,10 +163,6 @@ PlayerBar QPushButton#btn_queue:hover   { background: rgba(128,128,128,45); colo
 PlayerBar QPushButton#btn_queue:checked { color: #3875d7; }
 """
 
-
-def _fmt_ms(ms: int) -> str:
-    s = max(0, ms) // 1000
-    return f"{s // 60}:{s % 60:02d}"
 
 
 class PlayerBar(QWidget):

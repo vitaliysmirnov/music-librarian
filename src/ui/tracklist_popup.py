@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.ui.player_engine import _audio_paths, _read_track_tags
+from src.utils import fmt_ms as _fmt_ms
 
 _MAX_ARTIST = 22
 _MAX_TITLE  = 35
@@ -20,13 +21,6 @@ _MAX_TITLE  = 35
 
 def _trunc(s: str, n: int) -> str:
     return s if len(s) <= n else s[:n - 1] + "…"
-
-
-def _fmt_ms(ms: int) -> str:
-    s = ms // 1000
-    m, sec = divmod(s, 60)
-    h, m = divmod(m, 60)
-    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
 
 
 class TracklistPopup(QDialog):

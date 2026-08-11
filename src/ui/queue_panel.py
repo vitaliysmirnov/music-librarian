@@ -8,7 +8,8 @@ from PySide6.QtWidgets import (
     QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from src.ui.player_engine import PlayerEngine, QueueTrack, _AUDIO_EXTENSIONS
+from src.ui.player_engine import PlayerEngine, QueueTrack
+from src.utils.audio import AUDIO_EXTENSIONS
 
 _PANEL_STYLE = """
 QueuePanel {
@@ -380,7 +381,7 @@ class QueuePanel(QFrame):
                 if fp not in seen_folders:
                     seen_folders.add(fp)
                     self._engine.enqueue_release({"folder_path": fp})
-            elif p.is_file() and p.suffix.lower() in _AUDIO_EXTENSIONS:
+            elif p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS:
                 tp = str(p)
                 if tp not in seen_tracks:
                     seen_tracks.add(tp)

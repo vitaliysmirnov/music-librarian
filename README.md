@@ -1,54 +1,227 @@
 # Music Librarian
 
-A desktop utility for managing a personal music collection stored as folders on disk.
+A desktop music library manager for collections organised as folders on disk. Built with Python and PySide6.
 
-> **Note:** The current app icons are placeholders (checkerboard pattern). Final icons will be added in a future release.
+> **Note:** App icons are currently placeholders (checkerboard pattern). Final icons will be added in a future release.
 
-## What it does
+![Screenshot](assets/screenshot.png)
 
-- Scans configured source folders and indexes releases into a local SQLite database
-- Parses folder names using a configurable mask (e.g. `{artist} - {year_recorded} - {title} [{catalog_number}]`)
-- Displays the collection in a sortable, searchable table with custom columns driven by the mask
-- Watches the filesystem for changes and updates the library automatically
-- Detects when external drives are connected or disconnected and updates availability accordingly
-- Runs in the background via a system tray icon
+---
+
+## Features
+
+- **Automatic indexing** — scans configured source folders and stores metadata in a local SQLite database; no external services required
+- **Folder-name parsing** — a configurable mask extracts artist, year, title, catalog number, media type and any custom fields directly from folder names
+- **Searchable, sortable table** — multi-column sort with tiebreakers; columns driven by the mask; per-column visibility and reorderable headers
+- **Real-time watch** — monitors the filesystem via watchdog and reflects changes (added/removed/renamed folders) instantly without a full rescan
+- **Drive awareness** — detects external drive connects/disconnects and marks releases as available/unavailable accordingly
+- **Built-in player** — plays audio files via Qt Multimedia; supports queue reordering, drag-to-enqueue from the table, and queue persistence across restarts
+- **Tracklist popup** — shows all tracks in a release with artist, title and duration; play or enqueue individual tracks
+- **External player support** — optionally hand off playback to any configured app (e.g. foobar2000, FLAC Player)
+- **Release editing** — edit artist, title and other fields; renames the folder on disk automatically
+- **System tray** — runs in background with a tray icon; main window can be hidden
+
+---
+
+## Supported audio formats
+
+`.flac` `.mp3` `.wav` `.aiff` `.aif` `.m4a` `.alac` `.ogg` `.opus` `.ape` `.wv` `.wma` `.aac` `.dsf` `.dff`
+
+---
 
 ## Folder name mask
 
-The mask defines how folder names are parsed into metadata fields. Required tokens: `{artist}`, `{year_recorded}`, `{title}`. Optional tokens can be wrapped in brackets:
+The mask is the core configuration that tells Music Librarian how your folders are named. It uses `{token}` placeholders separated by literal text.
+
+### Built-in tokens
+
+| Token | Description |
+|---|---|
+| `{artist}` | Artist or group name (required) |
+| `{title}` | Release title (required) |
+| `{year_recorded}` | Recording year (required) |
+| `{year_released}` | Release year |
+| `{catalog_number}` | Label catalog number |
+| `{media}` | Format — `CD`, `LP`, `WEB`, etc. |
+| `{disc_number}` | Disc number for multi-disc sets |
+| `{source}` | Provenance tag, e.g. `_фонотека` |
+
+### Optional parts
+
+Wrap a portion of the mask in `[` `]` to make it optional — the pattern will match with or without that segment:
 
 ```
 {artist} - {year_recorded} - {title} [{catalog_number}] [{media}] ({year_released})
 ```
 
-Custom tokens (any name not in the built-in set) are stored and displayed as additional columns in the Releases table.
+This matches both:
+```
+David Bowie - 1973 - Aladdin Sane [EMI – CDP 79 4768 2] [CD] (1990)
+David Bowie - 1973 - Aladdin Sane
+```
+
+### Custom tokens
+
+Any `{name}` not in the built-in set is treated as a custom token. Custom tokens appear as additional columns in the Releases table and are included in search.
+
+### Multi-disc releases
+
+If a folder contains no audio files but has subdirectories that do, it is treated as a multi-disc container. The subdirectories are disc entries. The container row can be expanded in the table to reveal individual discs.
+
+---
+
+## Layout
+
+Music Librarian supports two folder layouts:
+
+```
+# Flat — releases directly under the source root
+/Music/_фонотека/David Bowie - 1973 - Aladdin Sane [CD]/
+
+# Artist-organised — one level of artist folders
+/Music/_фонотека/David Bowie/David Bowie - 1973 - Aladdin Sane [CD]/
+```
+
+Both layouts can coexist under the same source.
+
+---
 
 ## Installation
 
-Download the latest build for your platform from the [Releases](../../releases) page:
+Download the latest build from the [Releases](../../releases) page:
 
-- **macOS** — open the `.dmg`, drag the app to `/Applications`
-- **Windows** — extract the `.zip`, run `Music Librarian.exe`
+| Platform | File |
+|---|---|
+| macOS | `.dmg` — open, drag app to `/Applications` |
+| Windows | `.zip` — extract, run `Music Librarian.exe` |
+
+---
 
 ## Running from source
 
+**Requirements:** Python 3.12+
+
 ```bash
 python -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python main.py
 ```
 
-## Building
+On macOS, `pyobjc-framework-Cocoa` is required (already in `requirements.txt`) for Trash support and drive-mount notifications.
+
+---
+
+## Building a distributable
 
 ```bash
-python assets/gen_icons.py      # generate placeholder icons
-python build.py                 # produces dist/*.dmg (macOS) or dist/*.zip (Windows)
+pip install -r requirements-dev.txt
+python assets/gen_icons.py       # generate placeholder icons (skip if you have real icons)
+python build.py                  # produces dist/*.dmg (macOS) or dist/*.zip (Windows)
 ```
 
-## Requirements
+`build.py` calls PyInstaller with the spec in `music_librarian.spec`, then packages the output.
 
-- Python 3.12+
-- PySide6
-- watchdog
-- pyobjc-framework-Cocoa (macOS only)
+---
+
+## Configuration
+
+All settings are stored in the SQLite database (`music_librarian.db`) in the platform data directory:
+
+| Platform | Path |
+|---|---|
+| macOS | `~/Library/Application Support/MusicLibrarian/` |
+| Windows | `%APPDATA%\MusicLibrarian\` |
+| Linux | `~/.local/share/MusicLibrarian/` |
+
+### Scan modes
+
+| Mode | Behaviour |
+|---|---|
+| Manual | Scan only when you click **Scan Now** |
+| Automatic | Scan on startup and every N minutes (configurable) |
+
+The filesystem watcher runs independently of scan mode and handles real-time changes.
+
+### External player
+
+Enter a path to an application in Settings → External Player. On macOS the path should point to the `.app` bundle (e.g. `/Applications/Vox.app`). When set, a **Play with …** item appears in the release context menu.
+
+---
+
+## Project structure
+
+```
+src/
+├── database/
+│   └── db.py              SQLite access — schema, migrations, all CRUD
+├── scanner/
+│   ├── mask.py            Compiles the folder-name mask string to a regex
+│   ├── parser.py          ParsedRelease dataclass + parse_folder_name()
+│   └── scanner.py         Filesystem walker; reads disk, writes DB
+├── ui/
+│   ├── main_window.py     Top-level QMainWindow; wires all subsystems
+│   ├── releases_tab.py    Library table — model, proxy sort, delegate, view
+│   ├── player_bar.py      Transport controls and track/album labels
+│   ├── player_engine.py   Queue management and QMediaPlayer wrapper
+│   ├── queue_panel.py     Floating queue panel with drag-reorder
+│   ├── tracklist_popup.py Per-release track list dialog
+│   ├── edit_release_dialog.py  Metadata edit + folder rename
+│   ├── sources_tab.py     Add/remove/scan source directories
+│   ├── settings_tab.py    App settings (scan mode, mask, theme, log)
+│   ├── sidebar_panel.py   Left-column navigation
+│   ├── style.py           Shared QSS constants
+│   └── theme.py           Light / dark / system theme switching
+├── utils/
+│   ├── __init__.py        Shared helpers: fmt_ms(), open_path()
+│   ├── audio.py           AUDIO_EXTENSIONS constant
+│   ├── covers.py          Cover image save/load/rename
+│   ├── drive_monitor.py   OS drive-mount notifications (macOS / stub)
+│   └── logger.py          Logging setup + in-app log handler
+└── watcher/
+    └── watcher.py         watchdog observer + Qt-thread event draining
+```
+
+---
+
+## Data model
+
+A **release** corresponds to one folder on disk. Key fields:
+
+| Field | Description |
+|---|---|
+| `folder_path` | Absolute, NFC-normalised path — primary key |
+| `artist` | From folder name via mask |
+| `title` | From folder name via mask |
+| `year_recorded` | Recording year |
+| `catalog_number` | Label catalog number |
+| `media` | Format string |
+| `is_multi_disc` | `1` if the folder has no direct audio but has disc subdirectories |
+| `disc_number` | `0` for a multi-disc container; ≥1 for disc entries |
+| `is_available` | `0` when the source drive is offline |
+| `date_added` | ISO timestamp of first insert; never updated on re-scan |
+| `extras` | JSON blob for custom tokens |
+
+---
+
+## Development notes
+
+### NFC path normalisation
+
+macOS HFS+/APFS delivers paths in NFD form via watchdog while Python's `os.listdir` / `iterdir` produces NFC. All paths are normalised to NFC before storage and comparison to avoid spurious duplicate entries.
+
+### Column layout in ReleasesModel
+
+```
+[COL_PLAY] [known tokens in mask order] [custom tokens] [Disc] [Source] [Available] [Path]
+```
+
+`COL_PLAY` (index 0) holds the play/expand button; it never participates in sort. The column count changes when the mask is edited, triggering a full `_apply_default_widths()` reset.
+
+### Sort proxy
+
+`_MultiSortProxy` uses a custom `lessThan` with a fixed tiebreaker chain: primary column → artist → year_recorded → title → disc_number. Blank values always sort to the end. Numeric strings sort numerically. Multi-disc containers (disc_number = −1) always sort before their disc children.
+
+### Queue persistence
+
+On quit, `PlayerEngine.save_queue_state()` serialises the full queue (including the release `row` dict) to `queue_state.json`. On next launch, `restore_queue_state()` reconstructs the queue; the player is positioned at the last track but does not auto-play.

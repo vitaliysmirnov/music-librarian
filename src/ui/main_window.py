@@ -228,6 +228,10 @@ class MainWindow(QMainWindow):
             8000,
         )
         self._update_info = info
+        try:
+            self._tray.messageClicked.disconnect(self._open_update_page)
+        except RuntimeError:
+            pass
         self._tray.messageClicked.connect(self._open_update_page)
 
     def _open_update_page(self):
@@ -320,7 +324,7 @@ class MainWindow(QMainWindow):
         log.info("OS: drive mounted at %s", mount_path)
         triggered = False
         for source in self._db.get_sources():
-            if source["path"].startswith(mount_path) and not source["is_available"]:
+            if Path(source["path"]).is_relative_to(Path(mount_path)) and not source["is_available"]:
                 scan_source(self._db, source["id"], source["path"])
                 if self._watcher:
                     self._watcher.refresh_watches()
@@ -335,7 +339,7 @@ class MainWindow(QMainWindow):
         log.info("OS: drive unmounted at %s", mount_path)
         triggered = False
         for source in self._db.get_sources():
-            if source["path"].startswith(mount_path) and source["is_available"]:
+            if Path(source["path"]).is_relative_to(Path(mount_path)) and source["is_available"]:
                 self._db.update_source_availability(source["id"], False)
                 self._db.set_releases_availability_by_source(source["id"], False)
                 if self._watcher:

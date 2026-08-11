@@ -6,10 +6,7 @@ from mutagen import File as MutagenFile
 from PySide6.QtCore import QObject, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaMetaData, QMediaPlayer
 
-_AUDIO_EXTENSIONS = {
-    ".flac", ".mp3", ".wav", ".aiff", ".aif", ".m4a", ".alac",
-    ".ogg", ".opus", ".ape", ".wv", ".wma", ".aac", ".dsf", ".dff",
-}
+from src.utils.audio import AUDIO_EXTENSIONS
 
 
 def _audio_paths(folder_path: str) -> list[str]:
@@ -18,7 +15,7 @@ def _audio_paths(folder_path: str) -> list[str]:
         return []
     return sorted(
         str(f) for f in folder.iterdir()
-        if f.is_file() and f.suffix.lower() in _AUDIO_EXTENSIONS
+        if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
     )
 
 
@@ -182,8 +179,6 @@ class PlayerEngine(QObject):
         if state == QMediaPlayer.PlaybackState.PlayingState:
             self._player.pause()
         elif self._track_idx >= 0:
-            self._player.play()
-        elif state == QMediaPlayer.PlaybackState.PausedState:
             self._player.play()
         elif self._queue:
             self._play_at(0)

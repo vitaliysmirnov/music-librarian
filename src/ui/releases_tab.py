@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
 )
 
 from src.scanner.mask import DEFAULT_MASK, KNOWN_TOKENS, get_custom_tokens
+from src.utils import open_path
+from src.utils.audio import AUDIO_EXTENSIONS
 from src.ui.edit_release_dialog import EditReleaseDialog
 from src.ui.tracklist_popup import TracklistPopup
 from src.ui.sidebar_panel import SidebarPanel
@@ -60,11 +62,6 @@ SETTINGS_KEY = "releases_header_state_v2"
 
 _PLAY_WIDTH          = 38
 _EXTRA_DEFAULT_WIDTH = 90
-
-_AUDIO_EXTENSIONS = {
-    ".flac", ".mp3", ".wav", ".aiff", ".aif", ".m4a", ".alac",
-    ".ogg", ".opus", ".ape", ".wv", ".wma", ".aac", ".dsf", ".dff",
-}
 
 _NAV_PAGE = {
     "releases":  0,
@@ -947,13 +944,7 @@ class _ReleasesView(QWidget):
         row = self._selected_row()
         if not row or not row["is_available"]:
             return
-        p = row["folder_path"]
-        if platform.system() == "Darwin":
-            subprocess.Popen(["open", p])
-        elif platform.system() == "Windows":
-            os.startfile(p)
-        else:
-            subprocess.Popen(["xdg-open", p])
+        open_path(row["folder_path"])
 
     def _trash_release(self):
         row = self._selected_row()

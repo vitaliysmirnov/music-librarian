@@ -5,14 +5,10 @@ from pathlib import Path
 from src.database.db import Database
 from src.scanner.mask import mask_to_regex, DEFAULT_MASK
 from src.scanner.parser import parse_folder_name
+from src.utils.audio import AUDIO_EXTENSIONS
 from src.utils.logger import get_logger
 
 log = get_logger()
-
-_AUDIO_EXTENSIONS = {
-    ".flac", ".mp3", ".wav", ".aiff", ".aif", ".m4a", ".alac",
-    ".ogg", ".opus", ".ape", ".wv", ".wma", ".aac", ".dsf", ".dff",
-}
 
 _IGNORED_SUBDIR_NAMES = {"artwork", "cover", "media"}
 
@@ -72,7 +68,7 @@ def _disc_subdirs(entry: Path) -> list[Path]:
     except PermissionError:
         return []
     has_audio = any(
-        f.is_file() and f.suffix.lower() in _AUDIO_EXTENSIONS for f in items
+        f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS for f in items
     )
     if has_audio:
         return []

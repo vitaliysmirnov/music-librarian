@@ -1,7 +1,6 @@
 import json
 import queue
 import re
-import unicodedata
 from pathlib import Path
 
 from watchdog.events import (
@@ -13,24 +12,11 @@ from watchdog.events import (
 from watchdog.observers import Observer
 
 from src.database.db import Database
-from src.scanner.mask import mask_to_regex, DEFAULT_MASK
 from src.scanner.parser import parse_folder_name
+from src.scanner.scanner import _load_pattern, _norm
 from src.utils.logger import get_logger
 
 log = get_logger()
-
-
-def _norm(path: str) -> str:
-    """Normalise path to NFC Unicode form (watchdog on macOS may deliver NFD)."""
-    return unicodedata.normalize("NFC", path)
-
-
-def _load_pattern(db: Database) -> re.Pattern:
-    mask = db.get_setting("folder_mask", DEFAULT_MASK)
-    try:
-        return mask_to_regex(mask)
-    except Exception:
-        return mask_to_regex(DEFAULT_MASK)
 
 
 def _is_release_path(path: str, source_path: str, pattern: re.Pattern) -> bool:

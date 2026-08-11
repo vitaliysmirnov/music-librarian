@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     Qt, QAbstractTableModel, QByteArray, QEvent, QMimeData,
-    QModelIndex, QPoint, QSize, Signal,
+    QModelIndex, QPoint, QSize, QUrl, Signal,
 )
 from PySide6.QtGui import QColor, QDrag, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
@@ -213,13 +213,22 @@ class _PlaylistTableView(QTableView):
         selected = {idx.row() for idx in self.selectionModel().selectedRows()}
         if not selected:
             return
-        # Encode selected proxy rows for internal reorder
-        data = QByteArray(",".join(str(r) for r in sorted(selected)).encode())
         mime = QMimeData()
-        mime.setData(_MIME_ROWS, data)
+        # Internal reorder payload
+        mime.setData(_MIME_ROWS, QByteArray(
+            ",".join(str(r) for r in sorted(selected)).encode()
+        ))
+        # URL payload so the queue panel can accept the drop
+        urls = [
+            QUrl.fromLocalFile(row["path"])
+            for row_i in sorted(selected)
+            if (row := self.model().get_row(row_i)) and Path(row["path"]).is_file()
+        ]
+        if urls:
+            mime.setUrls(urls)
         drag = QDrag(self)
         drag.setMimeData(mime)
-        drag.exec(Qt.DropAction.MoveAction)
+        drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction)
 
     # ── Receive drop ──────────────────────────────────────────────────────
 

@@ -139,6 +139,7 @@ class MainWindow(QMainWindow):
         self._releases_tab.play_track_requested.connect(self._player_engine.play_tracks)
         self._releases_tab.enqueue_track_requested.connect(self._player_engine.enqueue_tracks)
         self._releases_tab.liked_changed.connect(self._on_liked_changed)
+        self._releases_tab.go_to_release.connect(lambda _: self._tabs.setCurrentWidget(self._releases_tab))
         self._player_bar.navigate_requested.connect(self._on_navigate_requested)
         self._player_bar.like_toggled.connect(self._on_like_toggled)
         self._player_engine.track_changed.connect(self._on_track_changed_liked)

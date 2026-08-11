@@ -3,12 +3,13 @@
 from pathlib import Path
 
 from PySide6.QtCore import (
-    Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Signal,
+    Qt, QAbstractTableModel, QModelIndex, QMimeData, QPoint,
+    QSortFilterProxyModel, QUrl, Signal,
 )
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QDrag, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QMenu,
-    QTableView, QVBoxLayout, QWidget,
+    QAbstractItemView, QApplication, QHBoxLayout, QHeaderView,
+    QLabel, QMenu, QPushButton, QTableView, QVBoxLayout, QWidget,
 )
 
 from src.ui.style import ROW_HEIGHT, TABLE_STYLE
@@ -83,12 +84,70 @@ class _LikedSortProxy(QSortFilterProxyModel):
         return lv < rv
 
 
+class _LikedTableView(QTableView):
+    """QTableView with drag-to-queue support for liked tracks."""
+
+    def __init__(self):
+        super().__init__()
+        self._drag_start: QPoint | None = None
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self.setDefaultDropAction(Qt.DropAction.CopyAction)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_start is None or not (event.buttons() & Qt.MouseButton.LeftButton):
+            super().mouseMoveEvent(event)
+            return
+        if (event.pos() - self._drag_start).manhattanLength() < QApplication.startDragDistance():
+            return
+        press_pos = self._drag_start
+        self._drag_start = None
+        self._exec_drag(press_pos)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_start = None
+        super().mouseReleaseEvent(event)
+
+    def _exec_drag(self, press_pos: QPoint):
+        proxy_index = self.indexAt(press_pos)
+        if not proxy_index.isValid():
+            return
+
+        selected = {idx.row() for idx in self.selectionModel().selectedRows()}
+        if proxy_index.row() not in selected:
+            selected = {proxy_index.row()}
+
+        proxy = self.model()
+        src_model = proxy.sourceModel()
+        urls: list[QUrl] = []
+        for proxy_row in sorted(selected):
+            src_row = proxy.mapToSource(proxy.index(proxy_row, 0)).row()
+            row = src_model.get_row(src_row)
+            if row and Path(row["path"]).is_file():
+                urls.append(QUrl.fromLocalFile(row["path"]))
+
+        if not urls:
+            return
+
+        mime = QMimeData()
+        mime.setUrls(urls)
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        drag.exec(Qt.DropAction.CopyAction)
+
+
 class LikedTracksView(QWidget):
     """Table of liked tracks with play / enqueue / unlike actions."""
 
     play_track_requested    = Signal(list, dict)
     enqueue_track_requested = Signal(list, dict)
     track_unliked           = Signal()
+    go_to_release           = Signal(str)  # folder_path
 
     def __init__(self, db, parent=None):
         super().__init__(parent)
@@ -104,7 +163,7 @@ class LikedTracksView(QWidget):
         self._proxy = _LikedSortProxy()
         self._proxy.setSourceModel(self._model)
 
-        self._table = QTableView()
+        self._table = _LikedTableView()
         self._table.setModel(self._proxy)
         self._table.setSortingEnabled(True)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -139,7 +198,7 @@ class LikedTracksView(QWidget):
 
         layout.addWidget(self._table)
 
-        # Bottom bar
+        # ── Bottom bar ────────────────────────────────────────────────────
         bb_widget = QWidget()
         bb = QHBoxLayout(bb_widget)
         bb.setContentsMargins(8, 4, 8, 4)
@@ -148,6 +207,12 @@ class LikedTracksView(QWidget):
         unlike_sc = QShortcut(QKeySequence("Ctrl+Backspace"), self._table)
         unlike_sc.setContext(Qt.WidgetWithChildrenShortcut)
         unlike_sc.activated.connect(self._unlike_selected)
+
+        self._play_all_btn = QPushButton("▶ Play All")
+        self._play_all_btn.setToolTip("Play all liked tracks in current order")
+        self._play_all_btn.setEnabled(False)
+        self._play_all_btn.clicked.connect(self._play_all)
+        bb.addWidget(self._play_all_btn)
 
         self._count_label = QLabel("")
         self._count_label.setStyleSheet("font-size: 11px;")
@@ -158,7 +223,9 @@ class LikedTracksView(QWidget):
     def refresh(self) -> None:
         rows = self._db.get_liked_tracks()
         self._model.load(rows)
-        self._count_label.setText(f"Liked: {len(rows)}")
+        n = len(rows)
+        self._count_label.setText(f"Liked: {n}")
+        self._play_all_btn.setEnabled(n > 0)
 
     # ── Selection ──────────────────────────────────────────────────────────
 
@@ -173,6 +240,15 @@ class LikedTracksView(QWidget):
         rows = []
         for idx in self._table.selectionModel().selectedRows():
             src_row = self._proxy.mapToSource(idx).row()
+            r = self._model.get_row(src_row)
+            if r:
+                rows.append(r)
+        return rows
+
+    def _all_rows_in_order(self) -> list[dict]:
+        rows = []
+        for proxy_row in range(self._proxy.rowCount()):
+            src_row = self._proxy.mapToSource(self._proxy.index(proxy_row, 0)).row()
             r = self._model.get_row(src_row)
             if r:
                 rows.append(r)
@@ -193,6 +269,14 @@ class LikedTracksView(QWidget):
             release_row = {"folder_path": row["folder_path"],
                            "title": row["album"], "artist": row["artist"]}
             self.play_track_requested.emit([row["path"]], release_row)
+
+    def _play_all(self):
+        rows = [r for r in self._all_rows_in_order() if Path(r["path"]).is_file()]
+        if not rows:
+            return
+        paths = [r["path"] for r in rows]
+        release_row = {"folder_path": "", "title": "Liked", "artist": ""}
+        self.play_track_requested.emit(paths, release_row)
 
     def _enqueue_selected(self):
         rows = self._selected_rows()
@@ -223,16 +307,21 @@ class LikedTracksView(QWidget):
             return
         available = Path(row["path"]).is_file()
         menu = QMenu(self)
-        act_play    = menu.addAction("Play Now")
-        act_enqueue = menu.addAction("Add to Queue")
+        act_play       = menu.addAction("Play Now")
+        act_enqueue    = menu.addAction("Add to Queue")
         act_play.setEnabled(available)
         act_enqueue.setEnabled(available)
         menu.addSeparator()
-        act_unlike = menu.addAction("Remove from Liked")
+        act_go_release = menu.addAction("Go to Release")
+        act_go_release.setEnabled(bool(row.get("folder_path")))
+        menu.addSeparator()
+        act_unlike     = menu.addAction("Remove from Liked")
         chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
         if chosen == act_play:
             self._play_selected()
         elif chosen == act_enqueue:
             self._enqueue_selected()
+        elif chosen == act_go_release:
+            self.go_to_release.emit(row["folder_path"])
         elif chosen == act_unlike:
             self._unlike_selected()

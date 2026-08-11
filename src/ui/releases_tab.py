@@ -716,6 +716,20 @@ class _ReleasesView(QWidget):
         if self._tracklist_popup is not None:
             self._tracklist_popup.sync_like(path, liked)
 
+    def select_release(self, folder_path: str) -> None:
+        for src_row, row in enumerate(self._model._rows):
+            if row.get("folder_path") == folder_path:
+                src_idx   = self._model.index(src_row, 0)
+                proxy_idx = self._proxy.mapFromSource(src_idx)
+                if proxy_idx.isValid():
+                    self._table.selectionModel().select(
+                        proxy_idx,
+                        self._table.selectionModel().SelectionFlag.ClearAndSelect |
+                        self._table.selectionModel().SelectionFlag.Rows,
+                    )
+                    self._table.scrollTo(proxy_idx, QAbstractItemView.ScrollHint.PositionAtCenter)
+                break
+
     # ── Row context menu ───────────────────────────────────────────────────────
 
     def _show_context_menu(self, pos):
@@ -1037,6 +1051,7 @@ class ReleasesTab(QWidget):
     play_track_requested    = Signal(list, dict)
     enqueue_track_requested = Signal(list, dict)
     liked_changed           = Signal()
+    go_to_release           = Signal(str)  # folder_path
 
     def __init__(self, db):
         super().__init__()
@@ -1108,6 +1123,7 @@ class ReleasesTab(QWidget):
         self._liked_view.play_track_requested.connect(self.play_track_requested)
         self._liked_view.enqueue_track_requested.connect(self.enqueue_track_requested)
         self._liked_view.track_unliked.connect(self._on_liked_changed)
+        self._liked_view.go_to_release.connect(self.navigate_to_release)
 
         self._stack.addWidget(self._releases_view)             # 0  releases
         self._stack.addWidget(self._liked_view)                # 1
@@ -1149,6 +1165,14 @@ class ReleasesTab(QWidget):
         token_order  = _known_token_order(mask)
         extra_tokens = get_custom_tokens(mask)
         self._releases_view.refresh(token_order, extra_tokens)
+
+    def navigate_to_release(self, folder_path: str) -> None:
+        self._search.clear()
+        self._sidebar.set_current("releases")
+        self._stack.setCurrentIndex(_NAV_PAGE["releases"])
+        self._releases_view.refresh()
+        self._releases_view.select_release(folder_path)
+        self.go_to_release.emit(folder_path)
 
     def refresh_liked(self):
         self._liked_view.refresh()

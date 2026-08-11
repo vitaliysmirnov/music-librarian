@@ -31,17 +31,22 @@ _DRIVE_POLL_INTERVAL_MS = 20_000
 
 
 def _apply_tray_template() -> None:
-    """Tell macOS to treat our status-bar icon as a template image.
+    """Set NSImage.template=YES on our status-bar icon.
 
-    Template images are colourised automatically — white on dark bars, black on
-    light bars.  Qt does not set this flag via the public API, so we reach into
-    AppKit after the NSStatusItem has been created.  We only touch non-template
-    images sized ≈22 pt to avoid interfering with other apps' coloured icons.
+    macOS colourises template images automatically — white on dark bars, black
+    on light bars.  Qt (even 6.11) does not set this flag, so we do it via
+    AppKit after the NSStatusItem has been created.
+
+    NSStatusBar stores items in an NSConcretePointerArray; allObjects() is the
+    safe way to iterate it without touching raw C pointers.
     """
     try:
         from AppKit import NSStatusBar  # pyobjc-framework-Cocoa
         bar = NSStatusBar.systemStatusBar()
-        items = bar.valueForKey_("_statusItems") or []
+        ptr_array = bar.valueForKey_("_statusItems")
+        if ptr_array is None:
+            return
+        items = ptr_array.allObjects()
         for item in items:
             try:
                 btn = item.button()
@@ -50,9 +55,7 @@ def _apply_tray_template() -> None:
                 img = btn.image()
                 if img is None or img.isTemplate():
                     continue
-                sz = img.size()
-                if 18 < sz.width < 26 and 18 < sz.height < 26:
-                    img.setTemplate_(True)
+                img.setTemplate_(True)
             except Exception:
                 pass
     except Exception:
@@ -358,27 +361,30 @@ class MainWindow(QMainWindow):
         p = QPainter(pix)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        BK  = QColor(0, 0, 0, 255)
-        BKg = QColor(0, 0, 0, 100)  # semi-transparent for groove rings
+        # White on transparent: visible on dark bars out of the box.
+        # _apply_tray_template() also sets NSImage.template=YES so macOS
+        # colourises the icon for light bars (renders black there).
+        W  = QColor(255, 255, 255, 255)
+        Wg = QColor(255, 255, 255, 110)  # semi-transparent for groove rings
 
         # Vinyl record (center-left)
         vx, vy, vr = 9.5, 12.5, 7.5
-        p.setPen(QPen(BK, 1.2))
+        p.setPen(QPen(W, 1.2))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(QRectF(vx - vr, vy - vr, vr * 2, vr * 2))
-        p.setPen(QPen(BKg, 0.8))
+        p.setPen(QPen(Wg, 0.8))
         for gr in (5.8, 4.0):
             p.drawEllipse(QRectF(vx - gr, vy - gr, gr * 2, gr * 2))
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(BK))
+        p.setBrush(QBrush(W))
         p.drawEllipse(QRectF(vx - 2.2, vy - 2.2, 4.4, 4.4))
 
         # Magnifying glass (upper-right, overlays vinyl)
         mx, my, mr = 16.5, 6.0, 3.4
-        p.setPen(QPen(BK, 1.3))
+        p.setPen(QPen(W, 1.3))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(QRectF(mx - mr, my - mr, mr * 2, mr * 2))
-        hpen = QPen(BK, 1.8)
+        hpen = QPen(W, 1.8)
         hpen.setCapStyle(Qt.PenCapStyle.RoundCap)
         p.setPen(hpen)
         p.drawLine(QPointF(mx + mr * 0.707, my + mr * 0.707), QPointF(20.8, 10.5))

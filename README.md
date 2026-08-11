@@ -16,7 +16,10 @@ A desktop music library manager for collections organised as folders on disk. Bu
 - **Real-time watch** — monitors the filesystem via watchdog and reflects changes (added/removed/renamed folders) instantly without a full rescan
 - **Drive awareness** — detects external drive connects/disconnects and marks releases as available/unavailable accordingly
 - **Built-in player** — plays audio files via Qt Multimedia; supports queue reordering, drag-to-enqueue from the table, and queue persistence across restarts
-- **Tracklist popup** — shows all tracks in a release with artist, title and duration; play or enqueue individual tracks
+- **Tracklist popup** — shows all tracks in a release with artist, title and duration; play, enqueue, or like individual tracks; drag tracks to the queue or onto a playlist button
+- **Liked Tracks** — like/unlike individual tracks from the tracklist popup or the player bar; dedicated Liked view with sortable table, Play All, drag-to-queue, and Go to Release
+- **Playlists** — create and delete playlists from the sidebar; add tracks via drag-and-drop onto a playlist button or from a tracklist popup context menu; playlist view with sortable table, drag-reorder, Play All, like column, and Go to Release
+- **Go to Release** — navigate from the player bar, queue panel, Liked view, or playlist view directly to the playing track's release in the library; multi-disc containers auto-expand
 - **External player support** — optionally hand off playback to any configured app (e.g. foobar2000, FLAC Player)
 - **Release editing** — edit artist, title and other fields; renames the folder on disk automatically
 - **System tray** — runs in background with a tray icon; main window can be hidden
@@ -161,15 +164,25 @@ src/
 │   └── scanner.py         Filesystem walker; reads disk, writes DB
 ├── ui/
 │   ├── main_window.py     Top-level QMainWindow; wires all subsystems
-│   ├── releases_tab.py    Library table — model, proxy sort, delegate, view
-│   ├── player_bar.py      Transport controls and track/album labels
-│   ├── player_engine.py   Queue management and QMediaPlayer wrapper
-│   ├── queue_panel.py     Floating queue panel with drag-reorder
-│   ├── tracklist_popup.py Per-release track list dialog
+│   ├── releases_tab.py    Library tab — releases view, liked view, playlist view,
+│   │                      sidebar; navigation and playlist CRUD
+│   ├── player_bar.py      Transport controls, track/album labels, like button,
+│   │                      Go to Release context menu
+│   ├── player_engine.py   Queue management and QMediaPlayer wrapper;
+│   │                      _read_track_tags / _read_full_tags helpers
+│   ├── queue_panel.py     Floating queue panel with drag-reorder and
+│   │                      Go to Release context menu
+│   ├── tracklist_popup.py Per-release track list dialog; like buttons;
+│   │                      drag tracks to queue or playlist buttons
+│   ├── liked_view.py      Liked Tracks table — sort, Play All, drag-to-queue,
+│   │                      Go to Release, add to playlist
+│   ├── playlist_view.py   Playlist content table — sort, drag-reorder, Play All,
+│   │                      URL drop, like column, Go to Release
 │   ├── edit_release_dialog.py  Metadata edit + folder rename
 │   ├── sources_tab.py     Add/remove/scan source directories
 │   ├── settings_tab.py    App settings (scan mode, mask, theme, log)
-│   ├── sidebar_panel.py   Left-column navigation
+│   ├── sidebar_panel.py   Left-column navigation; scrollable playlist list
+│   │                      with drag-drop targets and delete context menu
 │   ├── style.py           Shared QSS constants
 │   └── theme.py           Light / dark / system theme switching
 ├── utils/
@@ -201,6 +214,18 @@ A **release** corresponds to one folder on disk. Key fields:
 | `is_available` | `0` when the source drive is offline |
 | `date_added` | ISO timestamp of first insert; never updated on re-scan |
 | `extras` | JSON blob for custom tokens |
+
+A **liked_track** stores per-file metadata at the time of liking (album is read from the file's ALBUM tag, falling back to the release DB entry):
+
+| Field | Description |
+|---|---|
+| `path` | Absolute file path — primary key |
+| `artist` / `title` / `album` | Read from file tags via mutagen |
+| `folder_path` | Parent directory (used for Go to Release) |
+| `duration_ms` | Track duration in milliseconds |
+| `date_liked` | ISO timestamp |
+
+**Playlists** are stored in two tables: `playlists` (id, name, date_created) and `playlist_tracks` (playlist_id, path, artist, title, album, folder_path, duration_ms, position).
 
 ---
 

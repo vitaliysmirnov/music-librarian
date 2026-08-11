@@ -143,7 +143,15 @@ class MainWindow(QMainWindow):
         self._player_bar.navigate_requested.connect(self._on_navigate_requested)
         self._player_bar.like_toggled.connect(self._on_like_toggled)
         self._player_bar.go_to_release_requested.connect(self._on_player_go_to_release)
+        self._player_bar.add_to_playlist_requested.connect(self._on_player_add_to_playlist)
+        self._releases_tab.playlists_changed.connect(self._player_bar.set_playlists)
+        self._releases_tab.playlists_changed.connect(self._queue_panel.set_playlists)
         self._queue_panel.go_to_release.connect(self._on_player_go_to_release)
+        self._queue_panel.add_to_playlist_requested.connect(self._on_queue_add_to_playlist)
+        # initial sync — playlists_changed already fired during ReleasesTab construction
+        initial_playlists = self._db.get_playlists()
+        self._player_bar.set_playlists(initial_playlists)
+        self._queue_panel.set_playlists(initial_playlists)
         self._player_engine.track_changed.connect(self._on_track_changed_liked)
 
         sb = QStatusBar()
@@ -183,10 +191,35 @@ class MainWindow(QMainWindow):
 
     def _on_track_changed_liked(self, row: dict, path: str, track_idx: int, total: int):
         self._player_bar.set_liked(self._db.is_track_liked(path))
+        folder_path = (row or {}).get("folder_path", "")
+        is_library = bool(folder_path and self._db.get_release_by_path(folder_path))
+        self._player_bar.set_is_library_track(is_library)
 
     def _on_navigate_requested(self, kind: str, value: str):
         self._tabs.setCurrentWidget(self._releases_tab)
         self._releases_tab.navigate_to(kind, value)
+
+    def _on_queue_add_to_playlist(self, track_idx: int, playlist_id: int):
+        queue = self._player_engine.queue
+        if not (0 <= track_idx < len(queue)):
+            return
+        t = queue[track_idx]
+        folder_path = (t.row or {}).get("folder_path") or str(Path(t.path).parent)
+        album = (t.row or {}).get("title") or ""
+        self._db.add_track_to_playlist(
+            playlist_id, t.path, t.artist, t.title, album, folder_path, t.duration_ms,
+        )
+        self._releases_tab.on_playlist_track_added(playlist_id)
+
+    def _on_player_add_to_playlist(
+        self,
+        playlist_id: int, path: str, artist: str, title: str,
+        album: str, folder_path: str, duration_ms: int,
+    ):
+        self._db.add_track_to_playlist(
+            playlist_id, path, artist, title, album, folder_path, duration_ms,
+        )
+        self._releases_tab.on_playlist_track_added(playlist_id)
 
     def _on_player_go_to_release(self, folder_path: str):
         if self._db.get_release_by_path(folder_path):

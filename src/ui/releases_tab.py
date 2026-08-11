@@ -1100,6 +1100,7 @@ class ReleasesTab(QWidget):
     liked_changed           = Signal()
     go_to_release           = Signal(str)   # folder_path
     playlist_track_added    = Signal(int)   # playlist_id
+    playlists_changed       = Signal(list)  # list[dict] — id, name
 
     def __init__(self, db):
         super().__init__()
@@ -1206,6 +1207,9 @@ class ReleasesTab(QWidget):
         self.liked_changed.emit()
 
     def _on_popup_playlist_track_added(self, playlist_id: int):
+        self.on_playlist_track_added(playlist_id)
+
+    def on_playlist_track_added(self, playlist_id: int):
         if (self._stack.currentIndex() == 2 and
                 self._playlist_view._playlist_id == playlist_id):
             self._playlist_view.refresh()
@@ -1244,7 +1248,9 @@ class ReleasesTab(QWidget):
         self._refresh_playlists()
 
     def _refresh_playlists(self):
-        self._sidebar.refresh_playlists(self._db.get_playlists())
+        playlists = self._db.get_playlists()
+        self._sidebar.refresh_playlists(playlists)
+        self.playlists_changed.emit(playlists)
 
     def _on_tracks_dropped_on_playlist(self, playlist_id: int, urls: list) -> None:
         from src.ui.player_engine import _read_full_tags

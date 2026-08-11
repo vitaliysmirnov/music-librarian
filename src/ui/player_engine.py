@@ -78,6 +78,7 @@ class QueueTrack:
     artist: str
     title: str
     duration_ms: int = 0
+    is_library: bool = False
 
 
 class PlayerEngine(QObject):
@@ -136,7 +137,7 @@ class PlayerEngine(QObject):
         bare = not row.get("title")
         for p in _audio_paths(row["folder_path"]):
             track_row, artist, title, duration_ms = _row_for_path(p, None if bare else row)
-            self._queue.append(QueueTrack(row=track_row, path=p, artist=artist, title=title, duration_ms=duration_ms))
+            self._queue.append(QueueTrack(row=track_row, path=p, artist=artist, title=title, duration_ms=duration_ms, is_library=True))
         self.queue_changed.emit()
         if self._queue:
             self._play_at(0)
@@ -146,7 +147,7 @@ class PlayerEngine(QObject):
         bare = not row.get("title")
         for p in _audio_paths(row["folder_path"]):
             track_row, artist, title, duration_ms = _row_for_path(p, None if bare else row)
-            self._queue.append(QueueTrack(row=track_row, path=p, artist=artist, title=title, duration_ms=duration_ms))
+            self._queue.append(QueueTrack(row=track_row, path=p, artist=artist, title=title, duration_ms=duration_ms, is_library=True))
         self.queue_changed.emit()
         if self._track_idx < 0 and self._queue and self._is_stopped():
             self._play_at(0)
@@ -155,9 +156,10 @@ class PlayerEngine(QObject):
         """Replace queue with given paths and start playback."""
         self._queue.clear()
         self._track_idx = -1
+        is_library = release_row is not None
         for p in paths:
             row, artist, title, duration_ms = _row_for_path(p, release_row)
-            self._queue.append(QueueTrack(row=row, path=p, artist=artist, title=title, duration_ms=duration_ms))
+            self._queue.append(QueueTrack(row=row, path=p, artist=artist, title=title, duration_ms=duration_ms, is_library=is_library))
         self.queue_changed.emit()
         if self._queue:
             self._play_at(0)
@@ -165,9 +167,10 @@ class PlayerEngine(QObject):
     def enqueue_tracks(self, paths: list[str], release_row: dict | None = None):
         """Append specific audio files to the queue; start playback if idle."""
         added = False
+        is_library = release_row is not None
         for p in paths:
             row, artist, title, duration_ms = _row_for_path(p, release_row)
-            self._queue.append(QueueTrack(row=row, path=p, artist=artist, title=title, duration_ms=duration_ms))
+            self._queue.append(QueueTrack(row=row, path=p, artist=artist, title=title, duration_ms=duration_ms, is_library=is_library))
             added = True
         if added:
             self.queue_changed.emit()
@@ -290,7 +293,7 @@ class PlayerEngine(QObject):
             "current_idx": self._track_idx,
             "tracks": [
                 {"path": t.path, "artist": t.artist, "title": t.title,
-                 "duration_ms": t.duration_ms, "row": t.row}
+                 "duration_ms": t.duration_ms, "row": t.row, "is_library": t.is_library}
                 for t in self._queue
             ],
         }
@@ -321,6 +324,7 @@ class PlayerEngine(QObject):
                     artist=t.get("artist", ""),
                     title=t.get("title", ""),
                     duration_ms=t.get("duration_ms", 0),
+                    is_library=t.get("is_library", False),
                 ))
 
         if not self._queue:

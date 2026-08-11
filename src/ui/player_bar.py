@@ -184,6 +184,7 @@ class PlayerBar(QWidget):
     navigate_requested      = Signal(str, str)   # kind, value
     like_toggled            = Signal(str, dict, bool)  # path, row, is_liked
     go_to_release_requested = Signal(str)        # folder_path
+    add_to_playlist_requested = Signal(int, str, str, str, str, str, int)  # playlist_id, path, artist, title, album, folder_path, duration_ms
 
     def __init__(self, engine: PlayerEngine, parent=None):
         super().__init__(parent)
@@ -194,6 +195,8 @@ class PlayerBar(QWidget):
         self._current_path   = ""
         self._current_artist = ""
         self._current_title  = ""
+        self._playlists: list[dict] = []
+        self._is_library_track = False
         self.setFixedHeight(_BAR_H)
         self.setStyleSheet(_BAR_STYLE)
         self._setup_ui()
@@ -352,6 +355,12 @@ class PlayerBar(QWidget):
 
     # ── Public ────────────────────────────────────────────────────────────
 
+    def set_playlists(self, playlists: list[dict]):
+        self._playlists = playlists
+
+    def set_is_library_track(self, is_library: bool):
+        self._is_library_track = is_library
+
     def queue_button(self) -> QPushButton:
         return self._btn_queue
 
@@ -470,11 +479,32 @@ class PlayerBar(QWidget):
         folder_path = (self._current_row or {}).get("folder_path") or ""
         if not folder_path:
             folder_path = str(Path(self._current_path).parent)
+        album = (self._current_row or {}).get("title") or ""
+
         menu = QMenu(self)
-        act = menu.addAction("Go to Release")
+        act_go = menu.addAction("Go to Release")
+
+        pl_actions: dict = {}
+        if self._is_library_track and self._playlists:
+            menu.addSeparator()
+            pl_menu = menu.addMenu("Add to Playlist")
+            for pl in self._playlists:
+                act = pl_menu.addAction(pl["name"])
+                pl_actions[act] = pl["id"]
+
         chosen = menu.exec(self.sender().mapToGlobal(pos))
-        if chosen == act:
+        if chosen == act_go:
             self.go_to_release_requested.emit(folder_path)
+        elif chosen in pl_actions:
+            self.add_to_playlist_requested.emit(
+                pl_actions[chosen],
+                self._current_path,
+                self._current_artist,
+                self._current_title,
+                album,
+                folder_path,
+                self._duration_ms,
+            )
 
     def _on_link(self, href: str):
         if "://" in href:

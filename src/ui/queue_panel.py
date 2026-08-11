@@ -254,11 +254,13 @@ class _QueueList(QListWidget):
 
 
 class QueuePanel(QFrame):
-    go_to_release = Signal(str)   # folder_path
+    go_to_release             = Signal(str)        # folder_path
+    add_to_playlist_requested = Signal(int, int)   # track_idx, playlist_id
 
     def __init__(self, engine: PlayerEngine, parent=None):
         super().__init__(parent)
-        self._engine = engine
+        self._engine    = engine
+        self._playlists: list[dict] = []
         self.setObjectName("QueuePanel")
         self.setStyleSheet(_PANEL_STYLE)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -403,11 +405,23 @@ class QueuePanel(QFrame):
         folder_path = (track.row or {}).get("folder_path") or ""
         if not folder_path:
             folder_path = str(Path(track.path).parent)
+
         menu = QMenu(self)
-        act = menu.addAction("Go to Release")
+        act_go = menu.addAction("Go to Release")
+
+        pl_actions: dict = {}
+        if track.is_library and self._playlists:
+            menu.addSeparator()
+            pl_menu = menu.addMenu("Add to Playlist")
+            for pl in self._playlists:
+                act = pl_menu.addAction(pl["name"])
+                pl_actions[act] = pl["id"]
+
         chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
-        if chosen == act:
+        if chosen == act_go:
             self.go_to_release.emit(folder_path)
+        elif chosen in pl_actions:
+            self.add_to_playlist_requested.emit(idx, pl_actions[chosen])
 
     def _enqueue_from_urls(self, mime: QMimeData):
         """Enqueue dropped URLs: folders add their full audio content,
@@ -457,6 +471,9 @@ class QueuePanel(QFrame):
     def _on_move_requested(self, from_idx: int, to_idx: int):
         self._engine.move_track(from_idx, to_idx)
         QTimer.singleShot(0, self._refresh)
+
+    def set_playlists(self, playlists: list[dict]):
+        self._playlists = playlists
 
     # ── Show / hide ───────────────────────────────────────────────────────
 

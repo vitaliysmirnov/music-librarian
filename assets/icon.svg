@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <!-- No background — transparent canvas, macOS applies its own mask -->
-  <circle cx="256" cy="256" r="240" fill="#111114"/>
-  <circle cx="256" cy="256" r="192" fill="none" stroke="white" stroke-width="6" opacity="0.20"/>
-  <circle cx="256" cy="256" r="143" fill="none" stroke="white" stroke-width="6" opacity="0.20"/>
-  <circle cx="256" cy="256" r="72"  fill="white"/>
-  <circle cx="256" cy="256" r="18"  fill="#111114"/>
+  <circle cx="256" cy="256" r="223" fill="#111114"/>
+  <circle cx="256" cy="256" r="179" fill="none" stroke="white" stroke-width="6" opacity="0.20"/>
+  <circle cx="256" cy="256" r="133" fill="none" stroke="white" stroke-width="6" opacity="0.20"/>
+  <circle cx="256" cy="256" r="67"  fill="white"/>
+  <circle cx="256" cy="256" r="17"  fill="#111114"/>
 </svg>

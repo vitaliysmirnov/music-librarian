@@ -1,22 +1,19 @@
 """Generate app icons from assets/icon.png (1024×1024 RGBA master).
 
-Requires: pillow  (already a dep of cairosvg; also in requirements-dev.txt)
+Requires: pillow  (pip install pillow)
 
 Outputs:
   icon.iconset/   — all macOS sizes
   icon.icns       — macOS bundle icon (macOS only, via iconutil)
   icon.ico        — Windows multi-size icon
-  tray.png        — 22×22 menu-bar icon (white note, transparent bg)
+  tray.png        — 44×44 tray icon (black vinyl+magnifier on transparent)
 """
-import os
-import struct
 import subprocess
 import sys
-import zlib
 from pathlib import Path
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageDraw
 except ImportError:
     print("ERROR: pillow not installed.  pip install pillow")
     sys.exit(1)
@@ -76,62 +73,40 @@ imgs[0].save(
 )
 print("  icon.ico")
 
-# ── tray.png — 22×22 white music note on transparent background ────────────────
-# Hand-drawn bitmap: reads clearly at menu-bar size without scaling artefacts.
+# ── tray.png — vinyl + magnifier, black on transparent (macOS template image) ──
+# Rendered at 44×44 (@2x). Coordinates are in 22px logical units, scaled ×2.
 
-def _chunk(tag: bytes, data: bytes) -> bytes:
-    body = tag + data
-    return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+def _make_tray(px: int = 44) -> "Image.Image":
+    img = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    sc = px / 22  # scale from 22px logical reference
 
-def _write_rgba_png(path: Path, size: int, pixels: list) -> None:
-    raw = b""
-    for y in range(size):
-        raw += b"\x00"
-        for x in range(size):
-            raw += bytes(pixels[y * size + x])
-    ihdr = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)
-    with open(path, "wb") as f:
-        f.write(b"\x89PNG\r\n\x1a\n")
-        f.write(_chunk(b"IHDR", ihdr))
-        f.write(_chunk(b"IDAT", zlib.compress(raw, 9)))
-        f.write(_chunk(b"IEND", b""))
+    BK  = (0, 0, 0, 255)
+    BKg = (0, 0, 0, 100)
 
-_NOTE_11 = [
-    "           ",
-    "      ##   ",
-    "      ##   ",
-    "      ##   ",
-    "    ####   ",
-    "   #####   ",
-    "   #####   ",
-    "   #####   ",
-    "    ###    ",
-    "           ",
-    "           ",
-]
+    def _circ(cx, cy, r, fill=None, outline=None, lw=1):
+        cx, cy, r = cx * sc, cy * sc, r * sc
+        lw = max(1, round(lw * sc))
+        d.ellipse([(cx - r, cy - r), (cx + r, cy + r)],
+                  fill=fill, outline=outline, width=lw)
 
-def _upscale2(bitmap: list) -> list:
-    out = []
-    for row in bitmap:
-        doubled = "".join(c * 2 for c in row)
-        out.append(doubled)
-        out.append(doubled)
-    return out
+    # Vinyl record (center-left)
+    _circ(9.5, 12.5, 7.5, outline=BK, lw=1.2)
+    _circ(9.5, 12.5, 5.8, outline=BKg, lw=0.8)
+    _circ(9.5, 12.5, 4.0, outline=BKg, lw=0.8)
+    _circ(9.5, 12.5, 2.2, fill=BK)
 
-def _music_note_rgba(size: int) -> list:
-    note = _upscale2(_NOTE_11)
-    pixels = []
-    for y in range(size):
-        for x in range(size):
-            nx = x * 22 // size
-            ny = y * 22 // size
-            if ny < len(note) and nx < len(note[ny]) and note[ny][nx] == "#":
-                pixels.append((255, 255, 255, 255))
-            else:
-                pixels.append((0, 0, 0, 0))
-    return pixels
+    # Magnifying glass (upper-right, overlays vinyl)
+    mx, my, mr = 16.5, 6.0, 3.4
+    _circ(mx, my, mr, outline=BK, lw=1.3)
+    x1 = (mx + mr * 0.707) * sc
+    y1 = (my + mr * 0.707) * sc
+    x2, y2 = 20.8 * sc, 10.5 * sc
+    d.line([(x1, y1), (x2, y2)], fill=BK, width=max(1, round(1.8 * sc)))
 
-_write_rgba_png(here / "tray.png", 22, _music_note_rgba(22))
-print("  tray.png (22×22 RGBA)")
+    return img
+
+_make_tray(44).save(here / "tray.png")
+print("  tray.png (44×44 RGBA)")
 
 print("Done.")

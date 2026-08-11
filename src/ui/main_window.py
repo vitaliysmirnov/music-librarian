@@ -2,7 +2,7 @@ import platform
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QEvent, QObject, Signal
+from PySide6.QtCore import Qt, QTimer, QEvent, QObject, Signal, QRectF, QPointF
 from PySide6.QtGui import QIcon, QAction, QKeySequence, QPixmap, QPainter, QColor, QPen, QBrush
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar, QVBoxLayout,
@@ -317,20 +317,37 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _make_tray_icon() -> QIcon:
-        """Draw a music-note icon using Qt — no external file needed."""
+        """Draw vinyl+magnifier tray icon. Black on transparent = macOS template image."""
         pix = QPixmap(22, 22)
         pix.fill(Qt.GlobalColor.transparent)
         p = QPainter(pix)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # Use black; macOS renders it correctly on both light and dark menu bars.
-        color = QColor(0, 0, 0)
-        p.setBrush(QBrush(color))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(2, 13, 9, 7)          # note head (filled oval)
-        p.setPen(QPen(color, 2))
+
+        BK  = QColor(0, 0, 0, 255)
+        BKg = QColor(0, 0, 0, 100)  # semi-transparent for groove rings
+
+        # Vinyl record (center-left)
+        vx, vy, vr = 9.5, 12.5, 7.5
+        p.setPen(QPen(BK, 1.2))
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawLine(11, 17, 11, 3)           # stem
-        p.drawLine(11, 3, 19, 7)            # beam / flag
+        p.drawEllipse(QRectF(vx - vr, vy - vr, vr * 2, vr * 2))
+        p.setPen(QPen(BKg, 0.8))
+        for gr in (5.8, 4.0):
+            p.drawEllipse(QRectF(vx - gr, vy - gr, gr * 2, gr * 2))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(BK))
+        p.drawEllipse(QRectF(vx - 2.2, vy - 2.2, 4.4, 4.4))
+
+        # Magnifying glass (upper-right, overlays vinyl)
+        mx, my, mr = 16.5, 6.0, 3.4
+        p.setPen(QPen(BK, 1.3))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(QRectF(mx - mr, my - mr, mr * 2, mr * 2))
+        hpen = QPen(BK, 1.8)
+        hpen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(hpen)
+        p.drawLine(QPointF(mx + mr * 0.707, my + mr * 0.707), QPointF(20.8, 10.5))
+
         p.end()
         return QIcon(pix)
 

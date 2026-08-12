@@ -345,7 +345,7 @@ class _PlayButtonDelegate(ElidedTooltipDelegate):
             row = index.data(Qt.UserRole)
             if row:
                 if row.get("is_multi_disc"):
-                    icon = "▾" if row.get("_is_expanded") else "▸"
+                    icon = "•"
                 elif row["is_available"]:
                     icon = "▶"
                 else:

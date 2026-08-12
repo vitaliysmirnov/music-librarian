@@ -1079,6 +1079,9 @@ class _ReleasesView(QWidget):
         else:
             flat = [dict(r) for r in top_rows]
 
+        selected = self._selected_row()
+        selected_path = selected.get("folder_path") if selected else None
+
         prev_n = self._model.columnCount()
         self._model.load(flat, token_order, extra_tokens)
         if self._model.columnCount() != prev_n:
@@ -1089,6 +1092,9 @@ class _ReleasesView(QWidget):
         hdr.resizeSection(COL_PLAY, _PLAY_WIDTH)
         hdr.setSectionResizeMode(COL_PLAY, QHeaderView.Interactive)
         self._count_label.setText(self._count_label_fn(len(top_rows)))
+
+        if selected_path:
+            self.select_release(selected_path)
 
 
 class ReleasesTab(QWidget):

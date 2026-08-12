@@ -131,6 +131,8 @@ class MainWindow(QMainWindow):
             self._db.get_setting("normalize_volume", "0") == "1"
         )
 
+        log.info("Application version: %s", "DEV" if __version__ == "dev" else f"v{__version__}")
+
         self._updater = UpdateChecker(self)
         self._updater.update_available.connect(self._on_update_available)
         QTimer.singleShot(3000, self._updater.check)

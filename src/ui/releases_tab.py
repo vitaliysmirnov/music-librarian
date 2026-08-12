@@ -1,9 +1,7 @@
 import json
-import os
 import platform
 import re
 import subprocess
-import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QIdentityProxyModel, QSortFilterProxyModel, QUrl, QMimeData, QPoint, QSize, QTimer, Signal
@@ -143,43 +141,6 @@ def _move_to_trash(path: str):
         if result.returncode != 0:
             raise OSError(result.stderr.decode())
 
-
-def _play_release(folder_path: str, player_path: str):
-    files = _audio_files(folder_path)
-    if not files:
-        return
-
-    m3u_path = Path(tempfile.gettempdir()) / "music_librarian_play.m3u"
-    m3u_path.write_text(
-        "#EXTM3U\n" + "\n".join(str(f) for f in files),
-        encoding="utf-8",
-    )
-    target = str(m3u_path)
-
-    if player_path:
-        clean = player_path.rstrip("/")
-        if platform.system() == "Darwin":
-            # Use `open -a <bundle.app>` regardless of whether the stored path
-            # is the .app itself or a binary nested inside it — this lets macOS
-            # hand the file to the already-running instance, which replaces its
-            # playlist (the behaviour that originally fixed the enqueue bug).
-            app_bundle = next(
-                (str(p) for p in [Path(clean)] + list(Path(clean).parents)
-                 if str(p).endswith(".app")),
-                None,
-            )
-            if app_bundle:
-                subprocess.Popen(["open", "-a", app_bundle, target])
-            else:
-                subprocess.Popen([clean, target])
-        else:
-            subprocess.Popen([clean, target])
-    elif platform.system() == "Darwin":
-        subprocess.Popen(["open", target])
-    elif platform.system() == "Windows":
-        os.startfile(target)
-    else:
-        subprocess.Popen(["xdg-open", target])
 
 
 class ReleasesModel(QAbstractTableModel):
@@ -405,9 +366,6 @@ class _PlayButtonDelegate(ElidedTooltipDelegate):
                 elif row["is_available"]:
                     if self._play_cb:
                         self._play_cb(row)
-                    else:
-                        player = self._db.get_setting("audio_player_path", "")
-                        _play_release(row["folder_path"], player)
             return True
         return super().editorEvent(event, model, option, index)
 
@@ -814,22 +772,13 @@ class _ReleasesView(QWidget):
 
         available    = bool(row["is_available"])
         is_container = bool(row.get("is_multi_disc"))
-        player_path  = self._db.get_setting("audio_player_path", "").strip()
 
         menu = QMenu(self)
 
         act_play_now = menu.addAction("Play Now")
-        act_play_now.setEnabled(available and not is_container)
+        act_play_now.setEnabled(available)
         act_enqueue = menu.addAction("Add to Queue")
-        act_enqueue.setEnabled(available and not is_container)
-
-        if player_path:
-            menu.addSeparator()
-            player_name = Path(player_path.rstrip("/")).stem or player_path
-            act_play = menu.addAction(f"Play with {player_name}")
-            act_play.setEnabled(available and not is_container)
-        else:
-            act_play = None
+        act_enqueue.setEnabled(available)
 
         menu.addSeparator()
         act_open = menu.addAction("Open Folder")
@@ -848,11 +797,15 @@ class _ReleasesView(QWidget):
         if chosen is None:
             return
         if chosen == act_play_now:
-            self.play_requested.emit(row)
+            if is_container:
+                self._play_or_enqueue_container(row, play=True)
+            else:
+                self.play_requested.emit(row)
         elif chosen == act_enqueue:
-            self.enqueue_requested.emit(row)
-        elif chosen == act_play:
-            _play_release(row["folder_path"], player_path)
+            if is_container:
+                self._play_or_enqueue_container(row, play=False)
+            else:
+                self.enqueue_requested.emit(row)
         elif chosen == act_open:
             self._open_release()
         elif chosen == act_edit:
@@ -861,6 +814,19 @@ class _ReleasesView(QWidget):
             self._show_tracklist()
         elif chosen == act_delete:
             self._trash_release()
+
+    def _play_or_enqueue_container(self, row: dict, play: bool):
+        paths = []
+        for child in self._db.get_disc_entries(row["folder_path"]):
+            if child["is_available"]:
+                paths.extend(_audio_files(child["folder_path"]))
+        if not paths:
+            return
+        paths = [str(p) for p in paths]
+        if play:
+            self.play_track_requested.emit(paths, row)
+        else:
+            self.enqueue_track_requested.emit(paths, row)
 
     # ── Header context menu ────────────────────────────────────────────────────
 

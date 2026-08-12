@@ -122,6 +122,8 @@ class MainWindow(QMainWindow):
 
         if self._data_dir:
             self._player_engine.restore_queue_state(self._data_dir / "queue_state.json")
+            for pl in self._db.get_playlists():
+                self._player_bar.on_playlist_renamed(pl["id"], pl["name"])
 
         self._updater = UpdateChecker(self)
         self._updater.update_available.connect(self._on_update_available)

@@ -1188,6 +1188,7 @@ class ReleasesTab(QWidget):
 
         self._sidebar.nav_changed.connect(self._on_nav)
         self._sidebar.add_playlist_requested.connect(self._on_add_playlist)
+        self._sidebar.rename_playlist_requested.connect(self._on_rename_playlist)
         self._sidebar.delete_playlist_requested.connect(self._on_delete_playlist)
         self._sidebar.reorder_playlists_requested.connect(self._on_reorder_playlists)
         self._sidebar.tracks_dropped_on_playlist.connect(self._on_tracks_dropped_on_playlist)
@@ -1230,6 +1231,15 @@ class ReleasesTab(QWidget):
         if not ok or not name.strip():
             return
         self._db.create_playlist(name.strip())
+        self._refresh_playlists()
+
+    def _on_rename_playlist(self, playlist_id: int, current_name: str):
+        name, ok = QInputDialog.getText(
+            self, "Rename Playlist", "New name:", text=current_name
+        )
+        if not ok or not name.strip() or name.strip() == current_name:
+            return
+        self._db.rename_playlist(playlist_id, name.strip())
         self._refresh_playlists()
 
     def _on_reorder_playlists(self, ordered_ids: list) -> None:

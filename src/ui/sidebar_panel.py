@@ -69,11 +69,23 @@ QMenu::item {
     padding: 5px 20px 5px 10px;
     border-radius: 4px;
     font-size: 13px;
-    color: #d04040;
+    color: palette(buttonText);
 }
 QMenu::item:selected {
+    background: rgba(128, 128, 128, 0.15);
+    color: palette(buttonText);
+}
+QMenu::item[destructive="true"] {
+    color: #d04040;
+}
+QMenu::item[destructive="true"]:selected {
     background: rgba(208, 64, 64, 0.15);
     color: #d04040;
+}
+QMenu::separator {
+    height: 1px;
+    background: palette(mid);
+    margin: 3px 6px;
 }
 """
 
@@ -141,8 +153,9 @@ def _icon_color_off() -> QColor:
 
 class _PlaylistButton(QPushButton):
     """Playlist nav button that also accepts URL drops to add tracks."""
-    tracks_dropped   = Signal(int, list)  # playlist_id, list[QUrl]
-    delete_requested = Signal(int)        # playlist_id
+    tracks_dropped   = Signal(int, list)        # playlist_id, list[QUrl]
+    rename_requested = Signal(int, str)         # playlist_id, current_name
+    delete_requested = Signal(int)              # playlist_id
 
     def __init__(self, playlist_id: int, name: str, parent=None):
         super().__init__(name, parent)
@@ -156,8 +169,17 @@ class _PlaylistButton(QPushButton):
     def _on_context_menu(self, pos):
         menu = QMenu(self)
         menu.setStyleSheet(_PLAYLIST_MENU_STYLE)
+        act_rename = menu.addAction("Rename Playlist")
+        menu.addSeparator()
         act_delete = menu.addAction("Delete Playlist")
-        if menu.exec(self.mapToGlobal(pos)) == act_delete:
+        act_delete.setProperty("destructive", "true")
+        # Re-polish so the property-based stylesheet rule takes effect
+        menu.style().unpolish(menu)
+        menu.style().polish(menu)
+        chosen = menu.exec(self.mapToGlobal(pos))
+        if chosen == act_rename:
+            self.rename_requested.emit(self._playlist_id, self.text())
+        elif chosen == act_delete:
             self.delete_requested.emit(self._playlist_id)
 
     # ── Drag initiation ───────────────────────────────────────────────────
@@ -308,6 +330,7 @@ class _PlaylistsContainer(QWidget):
 class SidebarPanel(QWidget):
     nav_changed                 = Signal(str)
     add_playlist_requested      = Signal()
+    rename_playlist_requested   = Signal(int, str)     # playlist_id, current_name
     delete_playlist_requested   = Signal(int)          # playlist_id
     reorder_playlists_requested = Signal(list)         # new ordered list of playlist ids
     tracks_dropped_on_playlist  = Signal(int, list)    # playlist_id, list[QUrl]
@@ -415,6 +438,7 @@ class SidebarPanel(QWidget):
             btn.setIconSize(QSize(_ICON_PX, _ICON_PX))
             btn.clicked.connect(lambda _c, k=f"playlist:{pid}": self._on_click(k))
             btn.tracks_dropped.connect(lambda pid_, urls: self.tracks_dropped_on_playlist.emit(pid_, urls))
+            btn.rename_requested.connect(self.rename_playlist_requested)
             btn.delete_requested.connect(self.delete_playlist_requested)
             self._playlists_layout.addWidget(btn)
             self._playlist_buttons[pid] = btn

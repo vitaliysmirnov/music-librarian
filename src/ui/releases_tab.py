@@ -747,11 +747,11 @@ class _ReleasesView(QWidget):
             )
             self._table.scrollTo(proxy_idx, QAbstractItemView.ScrollHint.PositionAtCenter)
 
-    def select_release(self, folder_path: str) -> None:
+    def select_release(self, folder_path: str, allow_expand: bool = True) -> None:
         # Direct match — regular releases, already-expanded disc children, or multi-disc parents.
         for src_row, row in enumerate(self._model._rows):
             if row.get("folder_path") == folder_path:
-                if (self._expandable and row.get("is_multi_disc")
+                if (allow_expand and self._expandable and row.get("is_multi_disc")
                         and folder_path not in self._expanded):
                     # Collapsed multi-disc container — expand it first, then re-find.
                     self._expanded.add(folder_path)
@@ -765,7 +765,8 @@ class _ReleasesView(QWidget):
                 return
 
         # Not found — folder_path is a disc child inside a collapsed multi-disc parent.
-        if not self._expandable:
+        # Only re-expand when allow_expand is True (explicit navigation, not selection restore).
+        if not self._expandable or not allow_expand:
             return
         for src_row, row in enumerate(self._model._rows):
             if not row.get("is_multi_disc"):
@@ -1097,7 +1098,7 @@ class _ReleasesView(QWidget):
         self._count_label.setText(self._count_label_fn(len(top_rows)))
 
         if selected_path:
-            self.select_release(selected_path)
+            self.select_release(selected_path, allow_expand=False)
 
 
 class ReleasesTab(QWidget):

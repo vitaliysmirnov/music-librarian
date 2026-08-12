@@ -406,6 +406,10 @@ class PlaylistView(QWidget):
         self._name        = name
         self._refresh_model()
 
+    def rename(self, new_name: str) -> None:
+        self._name = new_name
+        self._count_label.setText(new_name)
+
     def refresh(self) -> None:
         if self._playlist_id is not None:
             self._refresh_model()

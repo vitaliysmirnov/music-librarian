@@ -1243,6 +1243,8 @@ class ReleasesTab(QWidget):
         new_name = name.strip()
         self._db.rename_playlist(playlist_id, new_name)
         self.playlist_renamed.emit(playlist_id, new_name)
+        if self._playlist_view._playlist_id == playlist_id:
+            self._playlist_view.rename(new_name)
         self._refresh_playlists()
 
     def _on_reorder_playlists(self, ordered_ids: list) -> None:

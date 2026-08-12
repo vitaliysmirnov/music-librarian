@@ -127,6 +127,10 @@ class MainWindow(QMainWindow):
             for pl in self._db.get_playlists():
                 self._player_bar.on_playlist_renamed(pl["id"], pl["name"])
 
+        self._player_engine.set_normalize(
+            self._db.get_setting("normalize_volume", "0") == "1"
+        )
+
         self._updater = UpdateChecker(self)
         self._updater.update_available.connect(self._on_update_available)
         QTimer.singleShot(3000, self._updater.check)
@@ -170,6 +174,7 @@ class MainWindow(QMainWindow):
         self._sources_tab.sources_changed.connect(self._on_sources_changed)
         self._settings_tab.settings_changed.connect(self._apply_settings)
         self._settings_tab.mask_changed.connect(self._on_mask_changed)
+        self._settings_tab.normalize_changed.connect(self._player_engine.set_normalize)
         self._releases_tab.release_trashed.connect(self._update_info_label)
         self._releases_tab.play_requested.connect(self._player_engine.play_release)
         self._releases_tab.enqueue_requested.connect(self._player_engine.enqueue_release)

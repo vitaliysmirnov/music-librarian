@@ -2,7 +2,7 @@ from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtGui import QTextCharFormat, QColor, QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox,
-    QRadioButton, QHBoxLayout, QLabel,
+    QRadioButton, QHBoxLayout, QLabel, QCheckBox,
     QButtonGroup, QGraphicsOpacityEffect, QPlainTextEdit, QPushButton,
     QLineEdit, QScrollArea,
 )
@@ -30,7 +30,8 @@ _MAX_LOG_LINES = 500
 
 
 class SettingsTab(QWidget):
-    settings_changed = Signal()
+    settings_changed   = Signal()
+    normalize_changed  = Signal(bool)
     mask_changed = Signal()
     theme_changed = Signal(str)
 
@@ -169,6 +170,24 @@ class SettingsTab(QWidget):
 
         layout.addWidget(appearance_box)
 
+        # ── Playback ──────────────────────────────────────────────────────
+        playback_box = QGroupBox("Playback")
+        playback_layout = QVBoxLayout(playback_box)
+        playback_layout.setContentsMargins(12, 8, 12, 12)
+        playback_layout.setSpacing(4)
+
+        self._normalize_cb = QCheckBox("Normalize volume")
+        self._normalize_cb.setFocusPolicy(Qt.NoFocus)
+        self._normalize_cb.toggled.connect(self._on_normalize_changed)
+        playback_layout.addWidget(self._normalize_cb)
+        playback_layout.addWidget(_hint(
+            "Equalizes loudness across tracks using ReplayGain tags when available, "
+            "or by measuring integrated loudness (LUFS) via ffmpeg in the background. "
+            "Target: −14 LUFS. Audio files are never modified."
+        ))
+
+        layout.addWidget(playback_box)
+
         # ── Log viewer ────────────────────────────────────────────────────
         log_box = QGroupBox("Log")
         log_layout = QVBoxLayout(log_box)
@@ -245,6 +264,10 @@ class SettingsTab(QWidget):
         self._interval_saved_label.setText("Saved")
         self._interval_saved_timer.start(2000)
         log.info("Settings: full scan interval set to %d min", value)
+
+    def _on_normalize_changed(self, checked: bool):
+        self._db.set_setting("normalize_volume", "1" if checked else "0")
+        self.normalize_changed.emit(checked)
 
     def _on_theme_changed(self, button_id: int, checked: bool):
         if not checked:
@@ -327,6 +350,10 @@ class SettingsTab(QWidget):
         self._mask_edit.setText(saved_mask)
         self._mask_edit.blockSignals(False)
         self._mask_apply_btn.setEnabled(False)
+
+        self._normalize_cb.blockSignals(True)
+        self._normalize_cb.setChecked(self._db.get_setting("normalize_volume", "0") == "1")
+        self._normalize_cb.blockSignals(False)
 
     def _save(self):
         mode = MODE_AUTO if self._auto_rb.isChecked() else MODE_MANUAL

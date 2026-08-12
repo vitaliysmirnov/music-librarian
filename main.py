@@ -36,8 +36,8 @@ class _App(QApplication):
                     break
         return super().event(e)
 
-_in_bundle = getattr(sys, "frozen", False)
-DATA_DIR = Path.home() / (".music-librarian" if _in_bundle else ".music-librarian-dev")
+from src._version import __version__
+DATA_DIR = Path.home() / (".music-librarian-dev" if __version__ == "dev" else ".music-librarian")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 from src.utils.logger import setup_logger

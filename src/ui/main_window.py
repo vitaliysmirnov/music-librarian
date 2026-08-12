@@ -262,11 +262,17 @@ class MainWindow(QMainWindow):
 
     def _on_tray_metadata(self, artist: str, title: str):
         tip = f"{artist} — {title}" if artist else title
-        _set_tray_tooltip(tip)
+        self._update_tray_tooltip(tip)
 
     def _on_tray_state(self, playing: bool):
         if not playing:
-            _set_tray_tooltip("Music Librarian")
+            self._update_tray_tooltip("Music Librarian")
+
+    def _update_tray_tooltip(self, text: str):
+        if sys.platform == "darwin":
+            _set_tray_tooltip(text)
+        else:
+            self._tray.setToolTip(text)
 
     def _on_navigate_requested(self, kind: str, value: str):
         self._tabs.setCurrentWidget(self._releases_tab)

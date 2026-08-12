@@ -175,6 +175,7 @@ class MainWindow(QMainWindow):
         self._settings_tab.settings_changed.connect(self._apply_settings)
         self._settings_tab.mask_changed.connect(self._on_mask_changed)
         self._settings_tab.normalize_changed.connect(self._player_engine.set_normalize)
+        self._tabs.currentChanged.connect(self._on_tab_changed)
         self._releases_tab.release_trashed.connect(self._update_info_label)
         self._releases_tab.play_requested.connect(self._player_engine.play_release)
         self._releases_tab.enqueue_requested.connect(self._player_engine.enqueue_release)
@@ -428,6 +429,10 @@ class MainWindow(QMainWindow):
         # Apply the flag after a short delay to let Qt finish creating the NSStatusItem.
         if sys.platform == "darwin":
             QTimer.singleShot(300, _apply_tray_template)
+
+    def _on_tab_changed(self, index: int):
+        if self._tabs.widget(index) is not self._releases_tab:
+            self._releases_tab.clear_releases_selection()
 
     # ── Settings ──────────────────────────────────────────────────────────
 

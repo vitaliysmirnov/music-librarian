@@ -733,6 +733,9 @@ class _ReleasesView(QWidget):
         if self._tracklist_popup is not None:
             self._tracklist_popup.sync_like(path, liked)
 
+    def clear_selection(self) -> None:
+        self._table.selectionModel().clearSelection()
+
     def _select_src_row(self, src_row: int) -> None:
         src_idx   = self._model.index(src_row, 0)
         proxy_idx = self._proxy.mapFromSource(src_idx)
@@ -1294,6 +1297,8 @@ class ReleasesTab(QWidget):
         self._on_popup_playlist_track_added(playlist_id)
 
     def _on_nav(self, key: str):
+        if key != "releases":
+            self._releases_view.clear_selection()
         self._sidebar.set_current(key)
         if key.startswith("playlist:"):
             pid = int(key.split(":")[1])
@@ -1342,3 +1347,6 @@ class ReleasesTab(QWidget):
 
     def refresh_playlists(self):
         self._refresh_playlists()
+
+    def clear_releases_selection(self):
+        self._releases_view.clear_selection()

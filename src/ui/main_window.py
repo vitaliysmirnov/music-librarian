@@ -30,6 +30,23 @@ log = get_logger()
 _DRIVE_POLL_INTERVAL_MS = 20_000
 
 
+def _set_tray_tooltip(text: str) -> None:
+    try:
+        from AppKit import NSStatusBar
+        ptr_array = NSStatusBar.systemStatusBar().valueForKey_("_statusItems")
+        if ptr_array is None:
+            return
+        for item in ptr_array.allObjects():
+            try:
+                btn = item.button()
+                if btn is not None:
+                    btn.setToolTip_(text)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def _apply_tray_template() -> None:
     """Set NSImage.template=YES on our status-bar icon.
 
@@ -199,6 +216,8 @@ class MainWindow(QMainWindow):
         self._player_bar.set_playlists(initial_playlists)
         self._queue_panel.set_playlists(initial_playlists)
         self._player_engine.track_changed.connect(self._on_track_changed_liked)
+        self._player_engine.metadata_changed.connect(self._on_tray_metadata)
+        self._player_engine.state_changed.connect(self._on_tray_state)
 
         sb = QStatusBar()
         self.setStatusBar(sb)
@@ -240,6 +259,14 @@ class MainWindow(QMainWindow):
         folder_path = (row or {}).get("folder_path", "")
         is_library = bool(folder_path and self._db.get_release_by_path(folder_path))
         self._player_bar.set_is_library_track(is_library)
+
+    def _on_tray_metadata(self, artist: str, title: str):
+        tip = f"{artist} — {title}" if artist else title
+        _set_tray_tooltip(tip)
+
+    def _on_tray_state(self, playing: bool):
+        if not playing:
+            _set_tray_tooltip("Music Librarian")
 
     def _on_navigate_requested(self, kind: str, value: str):
         self._tabs.setCurrentWidget(self._releases_tab)

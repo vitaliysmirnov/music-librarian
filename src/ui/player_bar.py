@@ -482,22 +482,39 @@ class PlayerBar(QWidget):
             self._meta_lbl.setToolTip("")
             return
         c      = QApplication.palette().color(QPalette.ColorRole.PlaceholderText).name()
-        as_    = self._album_search()
         album  = (self._current_row.get("title")          or "").strip()
         cat_no = (self._current_row.get("catalog_number") or "").strip()
         parts: list[str] = []
-        if album:
-            parts.append(self._make_link(
-                self._elide(album, self._MAX_ALBUM),
-                "release", as_, c,
-            ))
-        if album and cat_no:
-            parts.append(f'<span style="color:{c};">  —  </span>')
-        if cat_no:
-            parts.append(self._make_link(
-                self._elide(cat_no, self._MAX_CATNO),
-                "release", self._catno_search(), c,
-            ))
+
+        if self._nav_kind == "playlist":
+            # Single clickable link → navigate directly to the playlist
+            if album:
+                parts.append(self._make_link(
+                    self._elide(album, self._MAX_ALBUM),
+                    "playlist", str(self._nav_id), c,
+                ))
+        elif self._nav_kind == "liked":
+            # Single clickable link → navigate directly to Liked
+            if album:
+                parts.append(self._make_link(
+                    self._elide(album, self._MAX_ALBUM),
+                    "liked", "", c,
+                ))
+        else:
+            as_ = self._album_search()
+            if album:
+                parts.append(self._make_link(
+                    self._elide(album, self._MAX_ALBUM),
+                    "release", as_, c,
+                ))
+            if album and cat_no:
+                parts.append(f'<span style="color:{c};">  —  </span>')
+            if cat_no:
+                parts.append(self._make_link(
+                    self._elide(cat_no, self._MAX_CATNO),
+                    "release", self._catno_search(), c,
+                ))
+
         self._meta_lbl.setText("".join(parts))
         self._meta_lbl.set_has_links(bool(parts))
         truncated = (len(album)  > self._MAX_ALBUM or
@@ -517,21 +534,14 @@ class PlayerBar(QWidget):
         menu = QMenu(self)
 
         if sender is self._meta_lbl:
-            # Meta label: navigate to the source context
-            if self._nav_kind == "playlist":
-                act_go = menu.addAction("Go to Playlist")
-            elif self._nav_kind == "liked":
-                act_go = menu.addAction("Go to Liked")
-            else:
-                act_go = menu.addAction("Go to Release")
+            # For playlist/liked: left-click already navigates via the link;
+            # right-click context menu is not useful — suppress it.
+            if self._nav_kind in ("playlist", "liked"):
+                return
+            act_go = menu.addAction("Go to Release")
             chosen = menu.exec(sender.mapToGlobal(pos))
             if chosen == act_go:
-                if self._nav_kind == "playlist":
-                    self.navigate_requested.emit("playlist", str(self._nav_id))
-                elif self._nav_kind == "liked":
-                    self.navigate_requested.emit("liked", "")
-                else:
-                    self.go_to_release_requested.emit(folder_path)
+                self.go_to_release_requested.emit(folder_path)
         else:
             # Track label: Go to Release + Add to Playlist
             act_go = menu.addAction("Go to Release")

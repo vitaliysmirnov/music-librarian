@@ -416,7 +416,7 @@ class Database:
                 " AND (py_lower(a.artist) LIKE ? OR py_lower(a.title) LIKE ?"
                 " OR py_lower(a.year_recorded) LIKE ? OR py_lower(a.year_released) LIKE ?"
                 " OR py_lower(a.catalog_number) LIKE ? OR py_lower(a.media) LIKE ?"
-                " OR py_lower(a.extras) LIKE ?)"
+                " OR EXISTS (SELECT 1 FROM json_each(a.extras) WHERE py_lower(value) LIKE ?))"
             )
             params += [w] * 7
         query += " ORDER BY a.artist, a.year_recorded, a.title"

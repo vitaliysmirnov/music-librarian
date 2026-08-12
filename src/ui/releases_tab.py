@@ -476,9 +476,10 @@ class _MultiSortProxy(QSortFilterProxyModel):
 
 
 class _DragTableView(QTableView):
-    def __init__(self):
+    def __init__(self, disc_entries_fn=None):
         super().__init__()
         self._drag_start: QPoint | None = None
+        self._disc_entries_fn = disc_entries_fn
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -492,8 +493,10 @@ class _DragTableView(QTableView):
 
         pressed_index = self.indexAt(self._drag_start)
         if pressed_index.isValid() and pressed_index.column() == COL_PLAY:
-            super().mouseMoveEvent(event)
-            return
+            row = pressed_index.data(Qt.UserRole)
+            if not (row and row.get("is_multi_disc")):
+                super().mouseMoveEvent(event)
+                return
 
         if (event.pos() - self._drag_start).manhattanLength() < QApplication.startDragDistance():
             return
@@ -520,7 +523,13 @@ class _DragTableView(QTableView):
                 self.model().index(proxy_row, 0)
             )
             row = source_model.get_row(source_index.row())
-            if row and row["is_available"] and not row.get("is_multi_disc"):
+            if not row:
+                continue
+            if row.get("is_multi_disc") and self._disc_entries_fn:
+                for child in self._disc_entries_fn(row["folder_path"]):
+                    if child["is_available"]:
+                        urls.extend(_audio_urls(child["folder_path"]))
+            elif row["is_available"]:
                 urls.extend(_audio_urls(row["folder_path"]))
 
         if not urls:
@@ -604,7 +613,9 @@ class _ReleasesView(QWidget):
         self._proxy = _MultiSortProxy() if self._sortable else QIdentityProxyModel()
         self._proxy.setSourceModel(self._model)
 
-        self._table = _DragTableView()
+        self._table = _DragTableView(
+            disc_entries_fn=self._db.get_disc_entries if self._expandable else None,
+        )
         self._table.setModel(self._proxy)
         self._table.setSortingEnabled(self._sortable)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)

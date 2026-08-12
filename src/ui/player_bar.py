@@ -385,6 +385,11 @@ class PlayerBar(QWidget):
     def set_playlists(self, playlists: list[dict]):
         self._playlists = playlists
 
+    def on_playlist_renamed(self, playlist_id: int, new_name: str):
+        if self._nav_kind == "playlist" and self._nav_id == playlist_id and self._current_row:
+            self._current_row["title"] = new_name
+            self._rebuild_meta_label()
+
     def set_is_library_track(self, is_library: bool):
         self._is_library_track = is_library
 

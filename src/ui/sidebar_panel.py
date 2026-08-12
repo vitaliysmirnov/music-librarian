@@ -1,6 +1,6 @@
-from PySide6.QtCore import Qt, QByteArray, QMimeData, QPoint, QPointF, QRectF, QSize, Signal
+from PySide6.QtCore import QEvent, Qt, QByteArray, QMimeData, QPoint, QPointF, QRectF, QSize, Signal
 from PySide6.QtGui import QBrush, QColor, QDrag, QIcon, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget, QWidgetAction
 
 _ICON_PX      = 14   # logical icon size (points)
 _REORDER_MIME = "application/x-sidebar-playlist-id"
@@ -75,13 +75,6 @@ QMenu::item:selected {
     background: rgba(128, 128, 128, 0.15);
     color: palette(buttonText);
 }
-QMenu::item[destructive="true"] {
-    color: #d04040;
-}
-QMenu::item[destructive="true"]:selected {
-    background: rgba(208, 64, 64, 0.15);
-    color: #d04040;
-}
 QMenu::separator {
     height: 1px;
     background: palette(mid);
@@ -149,6 +142,35 @@ def _icon_color_off() -> QColor:
     return QColor(185, 185, 193) if is_dark else QColor(105, 105, 115)
 
 
+# ── Destructive QWidgetAction (red label with hover) ──────────────────────────
+
+class _DestructiveAction(QWidgetAction):
+    def __init__(self, text: str, parent: QMenu):
+        super().__init__(parent)
+        lbl = QLabel(text)
+        lbl.setContentsMargins(10, 5, 20, 5)
+        lbl.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        lbl.installEventFilter(self)
+        self._lbl = lbl
+        self.setDefaultWidget(lbl)
+        self._set_hovered(False)
+
+    def _set_hovered(self, hovered: bool):
+        bg = "rgba(208,64,64,0.15)" if hovered else "transparent"
+        self._lbl.setStyleSheet(
+            f"color:#d04040; background:{bg}; font-size:13px; border-radius:4px;"
+        )
+
+    def eventFilter(self, obj, event):
+        if obj is self._lbl:
+            t = event.type()
+            if t in (QEvent.Type.HoverEnter, QEvent.Type.Enter):
+                self._set_hovered(True)
+            elif t in (QEvent.Type.HoverLeave, QEvent.Type.Leave):
+                self._set_hovered(False)
+        return super().eventFilter(obj, event)
+
+
 # ── Playlist button with drop support ─────────────────────────────────────────
 
 class _PlaylistButton(QPushButton):
@@ -171,11 +193,8 @@ class _PlaylistButton(QPushButton):
         menu.setStyleSheet(_PLAYLIST_MENU_STYLE)
         act_rename = menu.addAction("Rename Playlist")
         menu.addSeparator()
-        act_delete = menu.addAction("Delete Playlist")
-        act_delete.setProperty("destructive", "true")
-        # Re-polish so the property-based stylesheet rule takes effect
-        menu.style().unpolish(menu)
-        menu.style().polish(menu)
+        act_delete = _DestructiveAction("Delete Playlist", menu)
+        menu.addAction(act_delete)
         chosen = menu.exec(self.mapToGlobal(pos))
         if chosen == act_rename:
             self.rename_requested.emit(self._playlist_id, self.text())

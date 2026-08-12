@@ -178,6 +178,7 @@ class MainWindow(QMainWindow):
         self._player_bar.go_to_release_requested.connect(self._on_player_go_to_release)
         self._player_bar.add_to_playlist_requested.connect(self._on_player_add_to_playlist)
         self._releases_tab.playlists_changed.connect(self._player_bar.set_playlists)
+        self._releases_tab.playlist_renamed.connect(self._player_bar.on_playlist_renamed)
         self._releases_tab.playlists_changed.connect(self._queue_panel.set_playlists)
         self._queue_panel.go_to_release.connect(self._on_player_go_to_release)
         self._queue_panel.add_to_playlist_requested.connect(self._on_queue_add_to_playlist)

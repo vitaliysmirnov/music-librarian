@@ -1101,6 +1101,7 @@ class ReleasesTab(QWidget):
     go_to_release           = Signal(str)   # folder_path
     playlist_track_added    = Signal(int)   # playlist_id
     playlists_changed       = Signal(list)  # list[dict] — id, name
+    playlist_renamed        = Signal(int, str)  # playlist_id, new_name
 
     def __init__(self, db):
         super().__init__()
@@ -1239,7 +1240,9 @@ class ReleasesTab(QWidget):
         )
         if not ok or not name.strip() or name.strip() == current_name:
             return
-        self._db.rename_playlist(playlist_id, name.strip())
+        new_name = name.strip()
+        self._db.rename_playlist(playlist_id, new_name)
+        self.playlist_renamed.emit(playlist_id, new_name)
         self._refresh_playlists()
 
     def _on_reorder_playlists(self, ordered_ids: list) -> None:

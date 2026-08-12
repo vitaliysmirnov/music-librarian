@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaMetaData, QMediaPlayer
 
 from src.utils.audio import AUDIO_EXTENSIONS
+from src.utils.normalizer import VolumeNormalizer
 
 
 def _audio_paths(folder_path: str) -> list[str]:
@@ -90,12 +91,18 @@ class PlayerEngine(QObject):
     position_changed = Signal(int)        # ms
     duration_changed = Signal(int)        # ms
     queue_changed    = Signal()
+    _norm_ready      = Signal(str, float) # path, gain_linear — internal use only
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._queue: list[QueueTrack] = []
         self._track_idx = -1
         self._shuffle_mode = False
+        self._normalize    = False
+        self._user_volume  = 0.7   # mirrors the initial setVolume call below
+        self._norm_gain    = 1.0   # linear multiplier from normalizer
+        self._normalizer   = VolumeNormalizer()
+        self._norm_ready.connect(self._on_norm_ready)
 
         self._player = QMediaPlayer(self)
         self._audio  = QAudioOutput(self)
@@ -239,7 +246,39 @@ class PlayerEngine(QObject):
         self._player.setPosition(ms)
 
     def set_volume(self, v: float):
-        self._audio.setVolume(max(0.0, min(1.0, v)))
+        self._user_volume = max(0.0, min(1.0, v))
+        self._apply_volume()
+
+    def set_normalize(self, enabled: bool):
+        self._normalize = enabled
+        if not enabled:
+            self._norm_gain = 1.0
+        self._apply_volume()
+        # Re-analyse current track when toggling on
+        if enabled and 0 <= self._track_idx < len(self._queue):
+            self._trigger_normalization(self._queue[self._track_idx].path)
+
+    def _apply_volume(self):
+        effective = self._user_volume * self._norm_gain if self._normalize else self._user_volume
+        self._audio.setVolume(max(0.0, min(1.0, effective)))
+
+    def _trigger_normalization(self, path: str):
+        cached = self._normalizer.gain_linear_cached(path)
+        if cached is not None:
+            self._norm_gain = cached
+            self._apply_volume()
+        else:
+            self._normalizer.analyze_async(
+                path,
+                lambda p, g: self._norm_ready.emit(p, g),
+            )
+
+    def _on_norm_ready(self, path: str, gain: float):
+        if (self._normalize
+                and 0 <= self._track_idx < len(self._queue)
+                and self._queue[self._track_idx].path == path):
+            self._norm_gain = gain
+            self._apply_volume()
 
     # ── Internal ──────────────────────────────────────────────────────────
 
@@ -248,6 +287,10 @@ class PlayerEngine(QObject):
             return
         self._track_idx = idx
         track = self._queue[idx]
+        self._norm_gain = 1.0
+        self._apply_volume()
+        if self._normalize:
+            self._trigger_normalization(track.path)
         self._player.setSource(QUrl.fromLocalFile(track.path))
         self._player.play()
         self.track_changed.emit(track.row, track.path, idx, len(self._queue))

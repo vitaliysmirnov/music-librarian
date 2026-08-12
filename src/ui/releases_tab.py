@@ -239,6 +239,17 @@ class ReleasesModel(QAbstractTableModel):
         if role == Qt.ForegroundRole and not row["is_available"]:
             return QColor("#888888")
 
+        if role == Qt.BackgroundRole and row.get("_is_disc_child"):
+            from PySide6.QtWidgets import QApplication
+            from PySide6.QtGui import QPalette
+            base = QApplication.palette().color(QPalette.ColorRole.Base)
+            delta = -15 if base.lightness() > 128 else 15
+            return QColor(
+                max(0, min(255, base.red()   + delta)),
+                max(0, min(255, base.green() + delta)),
+                max(0, min(255, base.blue()  + delta)),
+            )
+
         if role == Qt.UserRole:
             return row
 

@@ -95,6 +95,7 @@ class PlayerEngine(QObject):
         super().__init__(parent)
         self._queue: list[QueueTrack] = []
         self._track_idx = -1
+        self._shuffle_mode = False
 
         self._player = QMediaPlayer(self)
         self._audio  = QAudioOutput(self)
@@ -215,15 +216,8 @@ class PlayerEngine(QObject):
             self._track_idx += 1
         self.queue_changed.emit()
 
-    def shuffle_queue(self):
-        """Randomly reorder all tracks after the current one."""
-        cur = self._track_idx
-        if cur + 1 >= len(self._queue):
-            return
-        tail = self._queue[cur + 1:]
-        random.shuffle(tail)
-        self._queue[cur + 1:] = tail
-        self.queue_changed.emit()
+    def set_shuffle(self, enabled: bool):
+        self._shuffle_mode = enabled
 
     def play_pause(self):
         state = self._player.playbackState()
@@ -265,6 +259,12 @@ class PlayerEngine(QObject):
             return
         if self._track_idx < 0:
             self._play_at(0)
+        elif self._shuffle_mode:
+            candidates = [i for i in range(len(self._queue)) if i != self._track_idx]
+            if candidates:
+                self._play_at(random.choice(candidates))
+            else:
+                self._player.stop()
         elif self._track_idx + 1 < len(self._queue):
             self._play_at(self._track_idx + 1)
         else:

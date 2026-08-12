@@ -188,6 +188,8 @@ PlayerBar QPushButton#btn_shuffle {
 PlayerBar QPushButton#btn_shuffle:hover:!disabled   { background: rgba(128,128,128,45); color: palette(buttonText); }
 PlayerBar QPushButton#btn_shuffle:pressed:!disabled { background: rgba(128,128,128,75); }
 PlayerBar QPushButton#btn_shuffle:disabled          { color: palette(mid); }
+PlayerBar QPushButton#btn_shuffle:checked           { color: #3875d7; }
+PlayerBar QPushButton#btn_shuffle:checked:hover     { background: rgba(128,128,128,45); color: #3875d7; }
 """
 
 
@@ -268,10 +270,11 @@ class PlayerBar(QWidget):
 
         self._btn_shuffle = QPushButton("⇄")
         self._btn_shuffle.setObjectName("btn_shuffle")
-        self._btn_shuffle.setToolTip("Shuffle remaining queue")
+        self._btn_shuffle.setToolTip("Shuffle mode")
+        self._btn_shuffle.setCheckable(True)
         self._btn_shuffle.setFixedSize(28, 28)
         self._btn_shuffle.setEnabled(False)
-        self._btn_shuffle.clicked.connect(self._engine.shuffle_queue)
+        self._btn_shuffle.toggled.connect(self._engine.set_shuffle)
 
         self._btn_like = QPushButton("♡")
         self._btn_like.setObjectName("btn_like")

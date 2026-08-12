@@ -736,6 +736,11 @@ class _ReleasesView(QWidget):
     def clear_selection(self) -> None:
         self._table.selectionModel().clearSelection()
 
+    def collapse_all(self) -> None:
+        if self._expanded:
+            self._expanded.clear()
+            self.refresh()
+
     def _select_src_row(self, src_row: int) -> None:
         src_idx   = self._model.index(src_row, 0)
         proxy_idx = self._proxy.mapFromSource(src_idx)
@@ -1301,6 +1306,7 @@ class ReleasesTab(QWidget):
     def _on_nav(self, key: str):
         if key != "releases":
             self._releases_view.clear_selection()
+            self._releases_view.collapse_all()
         self._sidebar.set_current(key)
         if key.startswith("playlist:"):
             pid = int(key.split(":")[1])
@@ -1352,3 +1358,6 @@ class ReleasesTab(QWidget):
 
     def clear_releases_selection(self):
         self._releases_view.clear_selection()
+
+    def collapse_releases(self):
+        self._releases_view.collapse_all()

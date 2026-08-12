@@ -54,7 +54,7 @@ class QtLogHandler(logging.Handler):
         self.signals = _QtLogSignals()
         self.setFormatter(logging.Formatter(
             "%(asctime)s  %(levelname)-8s  %(message)s",
-            datefmt="%H:%M:%S",
+            datefmt="%Y-%m-%d %H:%M:%S",
         ))
 
     def emit(self, record: logging.LogRecord):

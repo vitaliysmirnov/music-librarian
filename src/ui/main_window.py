@@ -468,6 +468,7 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, index: int):
         if self._tabs.widget(index) is not self._releases_tab:
             self._releases_tab.clear_releases_selection()
+            self._releases_tab.collapse_releases()
 
     # ── Settings ──────────────────────────────────────────────────────────
 
@@ -589,7 +590,7 @@ class MainWindow(QMainWindow):
         self._status_label.setText("Scanning…")
         a, u, r = scan_all(self._db)
         self._refresh_all()
-        now = datetime.now().strftime("%d.%m.%Y %H:%M")
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
         self._status_label.setText(f"Scan {now} — added: {a}, updated: {u}, removed: {r}")
         if self._watcher:
             self._watcher.refresh_watches()

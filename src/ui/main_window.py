@@ -41,7 +41,7 @@ def _apply_tray_template() -> None:
     safe way to iterate it without touching raw C pointers.
     """
     try:
-        from AppKit import NSStatusBar  # pyobjc-framework-Cocoa
+        from AppKit import NSStatusBar, NSMakeSize  # pyobjc-framework-Cocoa
         bar = NSStatusBar.systemStatusBar()
         ptr_array = bar.valueForKey_("_statusItems")
         if ptr_array is None:
@@ -53,9 +53,11 @@ def _apply_tray_template() -> None:
                 if btn is None:
                     continue
                 img = btn.image()
-                if img is None or img.isTemplate():
+                if img is None:
                     continue
-                img.setTemplate_(True)
+                img.setSize_(NSMakeSize(30, 30))
+                if not img.isTemplate():
+                    img.setTemplate_(True)
             except Exception:
                 pass
     except Exception:
@@ -357,7 +359,7 @@ class MainWindow(QMainWindow):
         # Render at the screen's device pixel ratio so the icon is crisp on Retina.
         app = QApplication.instance()
         dpr = app.devicePixelRatio() if app else 2.0
-        phys = round(25 * dpr)
+        phys = round(30 * dpr)
         pix = QPixmap(phys, phys)
         pix.setDevicePixelRatio(dpr)
         pix.fill(Qt.GlobalColor.transparent)
@@ -371,26 +373,26 @@ class MainWindow(QMainWindow):
         Wg = QColor(255, 255, 255, 110)  # semi-transparent for groove rings
 
         # Vinyl record (center-left)
-        vx, vy, vr = 10.8, 14.2, 8.5
-        p.setPen(QPen(W, 1.4))
+        vx, vy, vr = 13.0, 17.0, 10.2
+        p.setPen(QPen(W, 1.7))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(QRectF(vx - vr, vy - vr, vr * 2, vr * 2))
-        p.setPen(QPen(Wg, 0.9))
-        for gr in (6.6, 4.5):
+        p.setPen(QPen(Wg, 1.1))
+        for gr in (7.9, 5.4):
             p.drawEllipse(QRectF(vx - gr, vy - gr, gr * 2, gr * 2))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(W))
-        p.drawEllipse(QRectF(vx - 2.5, vy - 2.5, 5.0, 5.0))
+        p.drawEllipse(QRectF(vx - 3.0, vy - 3.0, 6.0, 6.0))
 
         # Magnifying glass (upper-right, overlays vinyl)
-        mx, my, mr = 18.8, 6.8, 3.9
-        p.setPen(QPen(W, 1.5))
+        mx, my, mr = 22.6, 8.2, 4.7
+        p.setPen(QPen(W, 1.8))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(QRectF(mx - mr, my - mr, mr * 2, mr * 2))
-        hpen = QPen(W, 2.0)
+        hpen = QPen(W, 2.4)
         hpen.setCapStyle(Qt.PenCapStyle.RoundCap)
         p.setPen(hpen)
-        p.drawLine(QPointF(mx + mr * 0.707, my + mr * 0.707), QPointF(23.6, 11.9))
+        p.drawLine(QPointF(mx + mr * 0.707, my + mr * 0.707), QPointF(28.3, 14.3))
 
         p.end()
         return QIcon(pix)

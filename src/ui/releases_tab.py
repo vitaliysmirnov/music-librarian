@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QIdentityProxyModel, QSortFilterProxyModel, QUrl, QMimeData, QPoint, QSize, Signal
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QByteArray, QIdentityProxyModel, QSortFilterProxyModel, QUrl, QMimeData, QPoint, QSize, QTimer, Signal
 from PySide6.QtGui import QColor, QDrag, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel,
@@ -1001,6 +1001,7 @@ class _ReleasesView(QWidget):
         else:
             self._expanded.add(folder_path)
         self.refresh()
+        QTimer.singleShot(0, lambda: self.select_release(folder_path, allow_expand=False))
 
     # ── Release actions ────────────────────────────────────────────────────────
 

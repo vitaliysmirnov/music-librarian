@@ -681,7 +681,7 @@ class _ReleasesView(QWidget):
         bb.addStretch()
 
         if show_bottom_bar:
-            drag_hint = QLabel("▶ to play · drag to player")
+            drag_hint = QLabel("▶ to play or drag to player")
             drag_hint.setStyleSheet("color: palette(placeholderText); font-size: 11px;")
             bb.addWidget(drag_hint)
 

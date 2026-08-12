@@ -94,6 +94,8 @@ def _extras_from_row(row) -> dict:
 
 def _audio_files(folder_path: str) -> list[Path]:
     folder = Path(folder_path)
+    if not folder.is_dir():
+        return []
     return sorted(
         f for f in folder.iterdir()
         if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
@@ -878,14 +880,20 @@ class _ReleasesView(QWidget):
 
         fixed = {COL_PLAY, artist_col} if artist_col >= 0 else {COL_PLAY}
 
+        correction = None
         if logical == COL_PLAY and new_visual != 1:
-            hdr.moveSection(new_visual, 1)
-            return
-        if artist_col >= 0 and logical == artist_col and new_visual != 0:
-            hdr.moveSection(new_visual, 0)
-            return
-        if new_visual in (0, 1) and logical not in fixed:
-            hdr.moveSection(new_visual, old_visual)
+            correction = (new_visual, 1)
+        elif artist_col >= 0 and logical == artist_col and new_visual != 0:
+            correction = (new_visual, 0)
+        elif new_visual in (0, 1) and logical not in fixed:
+            correction = (new_visual, old_visual)
+
+        if correction is not None:
+            hdr.blockSignals(True)
+            try:
+                hdr.moveSection(*correction)
+            finally:
+                hdr.blockSignals(False)
             return
         self._save_header_state()
 

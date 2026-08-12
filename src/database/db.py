@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 import unicodedata
 from contextlib import contextmanager
@@ -9,6 +10,15 @@ from typing import Iterator
 from src.utils.logger import get_logger
 
 log = get_logger()
+
+_IDENT_RE = re.compile(r'^[a-z_][a-z0-9_]*$')
+
+def _safe_set_clause(fields: dict) -> str:
+    """Build a SQL SET clause from field names, rejecting non-identifier keys."""
+    for k in fields:
+        if not _IDENT_RE.match(k):
+            raise ValueError(f"Invalid column name: {k!r}")
+    return ", ".join(f"{k}=?" for k in fields)
 
 _DASH_CHARS = "‐‑‒–—―−﹘﹣－"
 
@@ -109,8 +119,11 @@ class Database:
         return conn
 
     def _init(self):
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
             conn.executescript(SCHEMA)
+        finally:
+            conn.close()
         self._migrate()
 
     def _migrate(self):
@@ -345,7 +358,7 @@ class Database:
             if not row:
                 log.debug("rename_release: NOT FOUND old_path=%r", old_path)
                 return False
-            sets = ", ".join(f"{k}=?" for k in fields)
+            sets = _safe_set_clause(fields)
             vals = list(fields.values()) + [new_path, new_path, now, old_path]
             c.execute(
                 f"UPDATE releases SET {sets}, folder_path=?, last_seen_path=?, "
@@ -441,7 +454,7 @@ class Database:
         if not fields:
             return
         now = datetime.now().isoformat(timespec="seconds")
-        sets = ", ".join(f"{k}=?" for k in fields) + ", modified_at=?"
+        sets = _safe_set_clause(fields) + ", modified_at=?"
         vals = list(fields.values()) + [now, parent_path]
         with self.conn() as c:
             c.execute(f"UPDATE releases SET {sets} WHERE parent_path=?", vals)

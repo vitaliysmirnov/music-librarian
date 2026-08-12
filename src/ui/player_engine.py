@@ -97,6 +97,7 @@ class PlayerEngine(QObject):
         super().__init__(parent)
         self._queue: list[QueueTrack] = []
         self._track_idx = -1
+        self._track_removed = False  # current track was removed while playing; don't auto-advance after it ends
         self._shuffle_mode = False
         self._normalize    = False
         self._user_volume  = 0.7   # mirrors the initial setVolume call below
@@ -206,6 +207,7 @@ class PlayerEngine(QObject):
             self._track_idx -= 1
         elif idx == self._track_idx:
             self._track_idx = -1
+            self._track_removed = True
         self.queue_changed.emit()
 
     def move_track(self, from_idx: int, to_idx: int):
@@ -285,6 +287,7 @@ class PlayerEngine(QObject):
     def _play_at(self, idx: int):
         if not (0 <= idx < len(self._queue)):
             return
+        self._track_removed = False
         self._track_idx = idx
         track = self._queue[idx]
         self._norm_gain = 1.0
@@ -301,6 +304,10 @@ class PlayerEngine(QObject):
         if not self._queue:
             return
         if self._track_idx < 0:
+            if self._track_removed:
+                self._track_removed = False
+                self._player.stop()
+                return
             self._play_at(0)
         elif self._shuffle_mode:
             candidates = [i for i in range(len(self._queue)) if i != self._track_idx]

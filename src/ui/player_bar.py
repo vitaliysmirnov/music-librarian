@@ -68,7 +68,7 @@ PlayerBar QPushButton#btn_next {
     border: none;
     background: transparent;
     color: palette(buttonText);
-    border-radius: 5px;
+    border-radius: 6px;
     padding: 2px 5px;
 }
 PlayerBar QPushButton#btn_prev { font-size: 13px; }
@@ -156,8 +156,8 @@ PlayerBar QPushButton#btn_like {
     background: transparent;
     color: palette(placeholderText);
     font-size: 15px;
-    padding: 0;
-    border-radius: 5px;
+    padding: 2px 5px;
+    border-radius: 6px;
 }
 PlayerBar QPushButton#btn_like:hover:!disabled   { background: rgba(128,128,128,45); color: palette(buttonText); }
 PlayerBar QPushButton#btn_like:checked           { color: #e0405a; }
@@ -182,8 +182,8 @@ PlayerBar QPushButton#btn_shuffle {
     background: transparent;
     color: palette(placeholderText);
     font-size: 13px;
-    padding: 2px 4px;
-    border-radius: 5px;
+    padding: 2px 5px;
+    border-radius: 6px;
 }
 PlayerBar QPushButton#btn_shuffle:hover:!disabled   { background: rgba(128,128,128,45); color: palette(buttonText); }
 PlayerBar QPushButton#btn_shuffle:pressed:!disabled { background: rgba(128,128,128,75); }
@@ -262,7 +262,7 @@ class PlayerBar(QWidget):
         self._btn_play.setToolTip("Play / Pause")
         self._btn_next.setToolTip("Next")
         self._btn_prev.setFixedSize(28, 28)
-        self._btn_play.setFixedSize(34, 28)
+        self._btn_play.setFixedSize(32, 28)
         self._btn_next.setFixedSize(28, 28)
         self._btn_prev.clicked.connect(self._engine.prev)
         self._btn_play.clicked.connect(self._engine.play_pause)
@@ -280,7 +280,7 @@ class PlayerBar(QWidget):
         self._btn_like.setObjectName("btn_like")
         self._btn_like.setToolTip("Like / Unlike")
         self._btn_like.setCheckable(True)
-        self._btn_like.setFixedSize(26, 28)
+        self._btn_like.setFixedSize(28, 28)
         self._btn_like.setEnabled(False)
         self._btn_like.toggled.connect(self._on_like_toggled)
 

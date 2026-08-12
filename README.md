@@ -2,8 +2,6 @@
 
 A desktop music library manager for collections organised as folders on disk. Built with Python and PySide6.
 
-![Screenshot](assets/screenshot.png)
-
 ---
 
 ## Features
@@ -13,15 +11,15 @@ A desktop music library manager for collections organised as folders on disk. Bu
 - **Searchable, sortable table** — multi-column sort with tiebreakers; columns driven by the mask; per-column visibility and reorderable headers
 - **Real-time watch** — monitors the filesystem via watchdog and reflects changes (added/removed/renamed folders) instantly without a full rescan
 - **Drive awareness** — detects external drive connects/disconnects and marks releases as available/unavailable accordingly
-- **Built-in player** — plays audio files via Qt Multimedia; supports queue reordering, drag-to-enqueue from the table, and queue persistence across restarts
+- **Built-in player** — plays audio files via Qt Multimedia; supports queue reordering, drag-to-enqueue from the table, shuffle mode, and queue persistence across restarts
 - **Tracklist popup** — shows all tracks in a release with artist, title and duration; play, enqueue, or like individual tracks; drag tracks to the queue or onto a playlist button
 - **Liked Tracks** — like/unlike individual tracks from the tracklist popup or the player bar; dedicated Liked view with sortable columns (Track, Release, Cat. No., Date Liked, Duration), Play All, drag-to-queue, and Go to Release
 - **Playlists** — create, delete, and drag-to-reorder playlists in the sidebar; add tracks via drag-and-drop onto a playlist button or from a tracklist popup context menu; playlist view with sortable columns (Track, Release, Cat. No., Date Added, Duration), drag-reorder, Play All, like column, and Go to Release
 - **Go to Release** — navigate from the player bar, queue panel, Liked view, or playlist view directly to the playing track's release in the library; for tracks added from outside the library (e.g. Finder drag) opens the folder in Finder instead; multi-disc containers auto-expand
 - **Truncated-text tooltips** — hovering over any clipped cell in the Releases, Liked, or playlist tables shows the full text after the standard tooltip delay
-- **External player support** — optionally hand off playback to any configured app (e.g. foobar2000, FLAC Player)
+- **Volume normalisation** — optional ReplayGain-style peak normalisation; enabled per-session from Settings
 - **Release editing** — edit artist, title and other fields; renames the folder on disk automatically
-- **System tray** — runs in background with a tray icon; main window can be hidden
+- **System tray** — runs in background with a tray icon; tooltip shows the currently playing track; main window can be hidden
 
 ---
 
@@ -68,7 +66,7 @@ Any `{name}` not in the built-in set is treated as a custom token. Custom tokens
 
 ### Multi-disc releases
 
-If a folder contains no audio files but has subdirectories that do, it is treated as a multi-disc container. The subdirectories are disc entries. The container row can be expanded in the table to reveal individual discs.
+If a folder contains no audio files but has subdirectories that do, it is treated as a multi-disc container. The subdirectories are disc entries. The container row can be expanded in the table to reveal individual discs. Disc children are visually distinguished by a subtle background tint. Multi-disc containers support drag-and-drop to the queue as well as **Play Now** and **Add to Queue** from the context menu — all tracks across all discs are collected automatically.
 
 ---
 
@@ -110,7 +108,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-On macOS, `pyobjc-framework-Cocoa` is required (already in `requirements.txt`) for Trash support and drive-mount notifications.
+On macOS, `pyobjc-framework-Cocoa` is required (already in `requirements.txt`) for Trash support, drive-mount notifications, and the tray icon tooltip.
 
 ---
 
@@ -171,9 +169,11 @@ All settings are stored in the SQLite database (`music_librarian.db`) in the pla
 
 The filesystem watcher runs independently of scan mode and handles real-time changes.
 
-### External player
+### Playback settings
 
-Enter a path to an application in Settings → External Player. On macOS the path should point to the `.app` bundle (e.g. `/Applications/Vox.app`). When set, a **Play with …** item appears in the release context menu.
+| Setting | Location | Description |
+|---|---|---|
+| Normalize volume | Settings → Playback | Enables peak normalisation for consistent loudness across tracks |
 
 ---
 

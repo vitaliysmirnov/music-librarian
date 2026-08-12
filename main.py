@@ -36,7 +36,8 @@ class _App(QApplication):
                     break
         return super().event(e)
 
-DATA_DIR = Path.home() / ".music-librarian"
+from src._version import __version__
+DATA_DIR = Path.home() / (".music-librarian-dev" if __version__ == "dev" else ".music-librarian")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 from src.utils.logger import setup_logger

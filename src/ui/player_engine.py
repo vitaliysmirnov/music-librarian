@@ -219,7 +219,8 @@ class PlayerEngine(QObject):
         self._norm_ready.connect(self._on_norm_ready)
 
         self._current_source: str = ""
-        self._pending_seek:   int = -1  # seek to apply after LoadedMedia
+        self._pending_seek:   int  = -1    # seek to apply after LoadedMedia
+        self._pending_play:   bool = False  # whether to play after applying pending seek
         self._cue_advancing:  bool = False
 
         self._player = QMediaPlayer(self)
@@ -363,6 +364,9 @@ class PlayerEngine(QObject):
         state = self._player.playbackState()
         if state == QMediaPlayer.PlaybackState.PlayingState:
             self._player.pause()
+        elif self._pending_seek >= 0:
+            # Media is still loading — request play for after the pending seek lands
+            self._pending_play = True
         elif self._track_idx >= 0:
             self._player.play()
         elif self._queue:
@@ -432,9 +436,11 @@ class PlayerEngine(QObject):
             if track.start_ms > 0:
                 # Delay play until LoadedMedia so we can seek before audio starts
                 self._pending_seek = track.start_ms
+                self._pending_play = True
                 self._player.setSource(QUrl.fromLocalFile(track.path))
             else:
                 self._pending_seek = -1
+                self._pending_play = False
                 self._player.setSource(QUrl.fromLocalFile(track.path))
                 self._player.play()
         else:
@@ -473,7 +479,9 @@ class PlayerEngine(QObject):
             if self._pending_seek >= 0:
                 self._player.setPosition(self._pending_seek)
                 self._pending_seek = -1
-                self._player.play()
+                if self._pending_play:
+                    self._pending_play = False
+                    self._player.play()
         elif status == QMediaPlayer.MediaStatus.EndOfMedia:
             self._advance()
 
@@ -580,6 +588,10 @@ class PlayerEngine(QObject):
         # calling setSource() again (which would interrupt the in-progress load
         # and make the first double-click after startup fail to play).
         self._current_source = track.path
+        if track.start_ms > 0:
+            # Seek to the CUE track's start once the file is loaded.
+            # _pending_play stays False — restore does not auto-play.
+            self._pending_seek = track.start_ms
         self._player.setSource(QUrl.fromLocalFile(track.path))
         self.track_changed.emit(track.row, track.path, self._track_idx, len(self._queue))
         if track.title:

@@ -218,10 +218,11 @@ class PlayerEngine(QObject):
         self._normalizer   = VolumeNormalizer()
         self._norm_ready.connect(self._on_norm_ready)
 
-        self._current_source: str = ""
-        self._pending_seek:   int  = -1    # seek to apply after LoadedMedia
-        self._pending_play:   bool = False  # whether to play after applying pending seek
-        self._cue_advancing:  bool = False
+        self._current_source:  str  = ""
+        self._pending_seek:    int  = -1    # seek to apply after LoadedMedia
+        self._pending_play:    bool = False  # whether to play after applying pending seek
+        self._cue_advancing:   bool = False
+        self._current_end_ms:  int  = 0     # end_ms of the track currently loaded; survives queue clear
 
         self._player = QMediaPlayer(self)
         self._audio  = QAudioOutput(self)
@@ -435,6 +436,7 @@ class PlayerEngine(QObject):
         self._cue_advancing  = False
         self._track_idx = idx
         track = self._queue[idx]
+        self._current_end_ms = track.end_ms
         self._norm_gain = 1.0
         self._apply_volume()
         if self._normalize:
@@ -527,6 +529,9 @@ class PlayerEngine(QObject):
                 self._advance()
         else:
             self.position_changed.emit(ms)
+            # Queue was cleared while a CUE track was playing — respect its end boundary
+            if not self._cue_advancing and self._current_end_ms > 0 and ms >= self._current_end_ms:
+                self._player.stop()
 
     def _on_state_changed(self, state):
         self.state_changed.emit(state == QMediaPlayer.PlaybackState.PlayingState)

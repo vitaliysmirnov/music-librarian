@@ -315,6 +315,9 @@ class QueuePanel(QFrame):
     # ── Refresh ───────────────────────────────────────────────────────────
 
     def _refresh(self):
+        scroll = self._list.verticalScrollBar()
+        saved_scroll = scroll.value() if scroll else 0
+
         self._list.clear()
         queue = self._engine.queue
         cur   = self._engine.current_track_idx
@@ -353,6 +356,9 @@ class QueuePanel(QFrame):
         mins, secs = divmod(total_s, 60)
         self._footer_lbl.setText(f"{n} tracks,  {mins} min {secs:02d} sec")
         self.setFixedHeight(min(500, 50 + n * (_ITEM_H + 1) + 26 + 8))
+
+        if saved_scroll and scroll:
+            scroll.setValue(saved_scroll)
 
     def _make_row(self, item: QListWidgetItem, track: "QueueTrack", is_current: bool) -> QWidget:
         w  = QWidget()

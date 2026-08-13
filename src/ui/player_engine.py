@@ -5,6 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mutagen import File as MutagenFile
+from mutagen.flac import FLAC
+from mutagen.monkeysaudio import MonkeysAudio
+from mutagen.mp3 import MP3
+from mutagen.wave import WAVE
+from mutagen.wavpack import WavPack
 from PySide6.QtCore import QObject, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaMetaData, QMediaPlayer
 
@@ -76,16 +81,28 @@ def _row_for_path(path: str, release_row: dict | None) -> tuple[dict, str, str, 
 
 
 def _duration_from_file(path: str) -> int:
-    """Total duration of an audio file in ms via mutagen.
+    """Total duration of an audio file in ms.
 
-    Uses ceil to avoid the edge case where int() truncation makes
-    total_ms land just below the last CUE track's start_ms.
-    Falls back to easy=True if the first attempt returns nothing.
+    MutagenFile() can return an object with info=None for certain FLAC
+    files (e.g. when STREAMINFO is read in an unexpected order). Falls
+    back to format-specific classes so we always get a real duration.
     """
+    # Mutagen audio objects act as tag dicts, so bool(af) is False when
+    # the file has no tags — use "is not None" to avoid skipping info.
     for easy in (False, True):
         try:
             af = MutagenFile(path, easy=easy)
-            if af and af.info:
+            if af is not None and af.info is not None:
+                ms = math.ceil(getattr(af.info, "length", 0) * 1000)
+                if ms > 0:
+                    return ms
+        except Exception:
+            pass
+    # Format-specific fallbacks
+    for cls in (FLAC, MP3, WAVE, WavPack, MonkeysAudio):
+        try:
+            af = cls(path)
+            if af is not None and af.info is not None:
                 ms = math.ceil(getattr(af.info, "length", 0) * 1000)
                 if ms > 0:
                     return ms

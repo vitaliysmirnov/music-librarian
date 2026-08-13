@@ -82,6 +82,11 @@ _ITEM_H     = 40
 _LINE_COLOR = QColor("#3875d7")
 
 
+def _fmt_dur(ms: int) -> str:
+    s = ms // 1000
+    return f"{s // 60}:{s % 60:02d}"
+
+
 class _DropLine(QWidget):
     """Transparent overlay that draws the Spotify-style insertion line."""
 
@@ -383,6 +388,12 @@ class QueuePanel(QFrame):
 
         info.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         hl.addWidget(info)
+
+        if track.duration_ms:
+            dur_lbl = QLabel(_fmt_dur(track.duration_ms))
+            dur_lbl.setStyleSheet("font-size: 10px; color: palette(placeholderText);")
+            dur_lbl.setContentsMargins(4, 0, 6, 0)
+            hl.addWidget(dur_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
 
         rm = QPushButton("✕")
         rm.setStyleSheet(_REMOVE_STYLE)

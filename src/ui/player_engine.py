@@ -533,11 +533,15 @@ class PlayerEngine(QObject):
         except Exception:
             return
 
-        saved_tracks = state.get("tracks", [])
-        saved_idx    = state.get("current_idx", -1)
-        current_path = (
+        saved_tracks  = state.get("tracks", [])
+        saved_idx     = state.get("current_idx", -1)
+        current_path  = (
             saved_tracks[saved_idx]["path"]
             if 0 <= saved_idx < len(saved_tracks) else None
+        )
+        current_start = (
+            saved_tracks[saved_idx].get("start_ms", 0)
+            if 0 <= saved_idx < len(saved_tracks) else 0
         )
 
         for t in saved_tracks:
@@ -559,12 +563,23 @@ class PlayerEngine(QObject):
 
         self._track_idx = 0
         if current_path:
+            # Match by path + start_ms so CUE tracks (same file, different offset) are identified correctly.
+            # Fall back to path-only if no start_ms match (e.g. after format migration).
             for i, t in enumerate(self._queue):
-                if t.path == current_path:
+                if t.path == current_path and t.start_ms == current_start:
                     self._track_idx = i
                     break
+            else:
+                for i, t in enumerate(self._queue):
+                    if t.path == current_path:
+                        self._track_idx = i
+                        break
 
         track = self._queue[self._track_idx]
+        # Mark the source so _play_at takes the same-file seek path instead of
+        # calling setSource() again (which would interrupt the in-progress load
+        # and make the first double-click after startup fail to play).
+        self._current_source = track.path
         self._player.setSource(QUrl.fromLocalFile(track.path))
         self.track_changed.emit(track.row, track.path, self._track_idx, len(self._queue))
         if track.title:

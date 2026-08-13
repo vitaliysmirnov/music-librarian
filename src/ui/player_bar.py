@@ -395,7 +395,10 @@ class PlayerBar(QWidget):
         self._btn_like.setEnabled(is_library)
         if not is_library:
             self.set_liked(False)
-        self._rebuild_track_label()
+        # Only rebuild when metadata has arrived; if both are empty the bar still
+        # shows the filename stem set by _on_track_changed — don't wipe it with "—".
+        if self._current_artist or self._current_title:
+            self._rebuild_track_label()
         self._rebuild_meta_label()
 
     def queue_button(self) -> QPushButton:

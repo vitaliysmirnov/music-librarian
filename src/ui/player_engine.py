@@ -10,7 +10,7 @@ from mutagen.monkeysaudio import MonkeysAudio
 from mutagen.mp3 import MP3
 from mutagen.wave import WAVE
 from mutagen.wavpack import WavPack
-from PySide6.QtCore import QObject, QUrl, Signal
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaMetaData, QMediaPlayer
 
 from src.utils.audio import AUDIO_EXTENSIONS
@@ -380,7 +380,9 @@ class PlayerEngine(QObject):
         self._advance()
 
     def seek(self, ms: int):
+        self._audio.setVolume(0.0)
         self._player.setPosition(ms)
+        QTimer.singleShot(80, self._apply_volume)
 
     def set_volume(self, v: float):
         self._user_volume = max(0.0, min(1.0, v))
@@ -422,6 +424,7 @@ class PlayerEngine(QObject):
     def _play_at(self, idx: int):
         if not (0 <= idx < len(self._queue)):
             return
+        was_cue_advancing = self._cue_advancing
         self._track_removed = False
         self._cue_advancing  = False
         self._track_idx = idx
@@ -443,12 +446,20 @@ class PlayerEngine(QObject):
                 self._pending_play = False
                 self._player.setSource(QUrl.fromLocalFile(track.path))
                 self._player.play()
+        elif was_cue_advancing:
+            # Natural CUE progression: end_ms[N] == start_ms[N+1], so the file is
+            # already playing at the right position. Seeking would cause a click —
+            # just update the track state and let the audio continue uninterrupted.
+            pass
         else:
-            # Same file — just seek within it (avoids a reload)
+            # User-initiated jump within the same file — mute briefly to mask click.
             self._pending_seek = -1
+            self._pending_play = False
+            self._audio.setVolume(0.0)
             self._player.setPosition(track.start_ms)
             if not self.is_playing():
                 self._player.play()
+            QTimer.singleShot(80, self._apply_volume)
 
         self.track_changed.emit(track.row, track.path, idx, len(self._queue))
         if track.title:

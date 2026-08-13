@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaMetaData, QMediaPlayer
 
 from src.utils.audio import AUDIO_EXTENSIONS
+from src.utils.cue import CueTrack, find_cue_for_file, find_cue_for_folder, parse_cue
 from src.utils.normalizer import VolumeNormalizer
 
 
@@ -73,6 +74,90 @@ def _row_for_path(path: str, release_row: dict | None) -> tuple[dict, str, str, 
     return row, artist, title, duration_ms
 
 
+def _duration_from_file(path: str) -> int:
+    """Total duration of an audio file in ms via mutagen."""
+    try:
+        af = MutagenFile(path)
+        if af and af.info:
+            return int(af.info.length * 1000)
+    except Exception:
+        pass
+    return 0
+
+
+def _cue_queue_tracks(
+    cue_tracks: list[CueTrack],
+    audio_file: str,
+    album_artist: str,
+    release_row: dict,
+    is_library: bool,
+) -> list["QueueTrack"]:
+    """Convert parsed CueTrack list to QueueTrack list."""
+    total_ms = _duration_from_file(audio_file)
+    result = []
+    for t in cue_tracks:
+        dur = t.end_ms - t.start_ms if t.end_ms else max(0, total_ms - t.start_ms)
+        result.append(QueueTrack(
+            row=release_row,
+            path=audio_file,
+            artist=t.artist or album_artist,
+            title=t.title,
+            duration_ms=dur,
+            is_library=is_library,
+            start_ms=t.start_ms,
+            end_ms=t.end_ms,
+        ))
+    return result
+
+
+def _queue_entries_for_folder(folder_path: str, release_row: dict | None) -> list["QueueTrack"]:
+    """Return QueueTrack list for a folder, expanding a CUE sheet if present."""
+    folder = Path(folder_path)
+    cue_path = find_cue_for_folder(folder)
+    if cue_path:
+        audio_file, album_artist, album_title, cue_tracks = parse_cue(cue_path)
+        if audio_file and cue_tracks:
+            row = release_row or {
+                "folder_path": folder_path,
+                "title":          album_title,
+                "artist":         album_artist,
+                "catalog_number": "",
+            }
+            return _cue_queue_tracks(
+                cue_tracks, str(audio_file), album_artist,
+                row, is_library=release_row is not None,
+            )
+
+    # No CUE — regular audio files
+    is_library = release_row is not None
+    bare = not (release_row or {}).get("title")
+    result = []
+    for p in _audio_paths(folder_path):
+        track_row, artist, title, duration_ms = _row_for_path(p, None if bare else release_row)
+        result.append(QueueTrack(
+            row=track_row, path=p, artist=artist, title=title,
+            duration_ms=duration_ms, is_library=is_library,
+        ))
+    return result
+
+
+def _cue_entries_for_single_file(path: str) -> list["QueueTrack"] | None:
+    """If a lone audio file has a matching CUE, return expanded entries; else None."""
+    cue_path = find_cue_for_file(Path(path))
+    if not cue_path:
+        return None
+    audio_file, album_artist, album_title, cue_tracks = parse_cue(cue_path)
+    if not audio_file or not cue_tracks:
+        return None
+    row = {
+        "folder_path": str(Path(path).parent),
+        "title":          album_title,
+        "artist":         album_artist,
+        "catalog_number": "",
+    }
+    return _cue_queue_tracks(cue_tracks, str(audio_file), album_artist, row, is_library=False)
+
+
 @dataclass
 class QueueTrack:
     row: dict
@@ -81,6 +166,8 @@ class QueueTrack:
     title: str
     duration_ms: int = 0
     is_library: bool = False
+    start_ms: int = 0  # non-zero for CUE virtual tracks
+    end_ms:   int = 0  # 0 = play to end of file
 
 
 class PlayerEngine(QObject):
@@ -105,6 +192,10 @@ class PlayerEngine(QObject):
         self._normalizer   = VolumeNormalizer()
         self._norm_ready.connect(self._on_norm_ready)
 
+        self._current_source: str = ""
+        self._pending_seek:   int = -1  # seek to apply after LoadedMedia
+        self._cue_advancing:  bool = False
+
         self._player = QMediaPlayer(self)
         self._audio  = QAudioOutput(self)
         self._audio.setVolume(0.7)
@@ -113,7 +204,7 @@ class PlayerEngine(QObject):
         self._player.mediaStatusChanged.connect(self._on_media_status)
         self._player.playbackStateChanged.connect(self._on_state_changed)
         self._player.metaDataChanged.connect(self._on_metadata_changed)
-        self._player.positionChanged.connect(lambda ms: self.position_changed.emit(int(ms)))
+        self._player.positionChanged.connect(self._on_position_changed)
         self._player.durationChanged.connect(lambda ms: self.duration_changed.emit(int(ms)))
 
         self._media_devices = QMediaDevices(self)
@@ -145,9 +236,7 @@ class PlayerEngine(QObject):
         self._queue.clear()
         self._track_idx = -1
         bare = not row.get("title")
-        for p in _audio_paths(row["folder_path"]):
-            track_row, artist, title, duration_ms = _row_for_path(p, None if bare else row)
-            self._queue.append(QueueTrack(row=track_row, path=p, artist=artist, title=title, duration_ms=duration_ms, is_library=True))
+        self._queue.extend(_queue_entries_for_folder(row["folder_path"], None if bare else row))
         self.queue_changed.emit()
         if self._queue:
             self._play_at(0)
@@ -155,9 +244,7 @@ class PlayerEngine(QObject):
     def enqueue_release(self, row: dict):
         """Append all tracks from release; start playback if currently idle."""
         bare = not row.get("title")
-        for p in _audio_paths(row["folder_path"]):
-            track_row, artist, title, duration_ms = _row_for_path(p, None if bare else row)
-            self._queue.append(QueueTrack(row=track_row, path=p, artist=artist, title=title, duration_ms=duration_ms, is_library=True))
+        self._queue.extend(_queue_entries_for_folder(row["folder_path"], None if bare else row))
         self.queue_changed.emit()
         if self._track_idx < 0 and self._queue and self._is_stopped():
             self._play_at(0)
@@ -166,6 +253,13 @@ class PlayerEngine(QObject):
         """Replace queue with given paths and start playback."""
         self._queue.clear()
         self._track_idx = -1
+        if release_row is None and len(paths) == 1:
+            expanded = _cue_entries_for_single_file(paths[0])
+            if expanded:
+                self._queue.extend(expanded)
+                self.queue_changed.emit()
+                self._play_at(0)
+                return
         is_library = release_row is not None
         for p in paths:
             row, artist, title, duration_ms = _row_for_path(p, release_row)
@@ -176,6 +270,14 @@ class PlayerEngine(QObject):
 
     def enqueue_tracks(self, paths: list[str], release_row: dict | None = None):
         """Append specific audio files to the queue; start playback if idle."""
+        if release_row is None and len(paths) == 1:
+            expanded = _cue_entries_for_single_file(paths[0])
+            if expanded:
+                self._queue.extend(expanded)
+                self.queue_changed.emit()
+                if self._track_idx < 0 and self._is_stopped():
+                    self._play_at(0)
+                return
         added = False
         is_library = release_row is not None
         for p in paths:
@@ -191,6 +293,9 @@ class PlayerEngine(QObject):
         is_active = self._player.playbackState() != QMediaPlayer.PlaybackState.StoppedState
         self._queue.clear()
         self._track_idx = -1
+        self._current_source = ""
+        self._pending_seek   = -1
+        self._cue_advancing  = False
         self.queue_changed.emit()
         if not is_active:
             self._player.stop()
@@ -288,14 +393,31 @@ class PlayerEngine(QObject):
         if not (0 <= idx < len(self._queue)):
             return
         self._track_removed = False
+        self._cue_advancing  = False
         self._track_idx = idx
         track = self._queue[idx]
         self._norm_gain = 1.0
         self._apply_volume()
         if self._normalize:
             self._trigger_normalization(track.path)
-        self._player.setSource(QUrl.fromLocalFile(track.path))
-        self._player.play()
+
+        if track.path != self._current_source:
+            self._current_source = track.path
+            if track.start_ms > 0:
+                # Delay play until LoadedMedia so we can seek before audio starts
+                self._pending_seek = track.start_ms
+                self._player.setSource(QUrl.fromLocalFile(track.path))
+            else:
+                self._pending_seek = -1
+                self._player.setSource(QUrl.fromLocalFile(track.path))
+                self._player.play()
+        else:
+            # Same file — just seek within it (avoids a reload)
+            self._pending_seek = -1
+            self._player.setPosition(track.start_ms)
+            if not self.is_playing():
+                self._player.play()
+
         self.track_changed.emit(track.row, track.path, idx, len(self._queue))
         if track.title:
             self.metadata_changed.emit(track.artist, track.title)
@@ -321,8 +443,23 @@ class PlayerEngine(QObject):
             self._player.stop()
 
     def _on_media_status(self, status):
-        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+        if status == QMediaPlayer.MediaStatus.LoadedMedia:
+            if self._pending_seek >= 0:
+                self._player.setPosition(self._pending_seek)
+                self._pending_seek = -1
+                self._player.play()
+        elif status == QMediaPlayer.MediaStatus.EndOfMedia:
             self._advance()
+
+    def _on_position_changed(self, ms: int):
+        self.position_changed.emit(ms)
+        if self._cue_advancing:
+            return
+        if 0 <= self._track_idx < len(self._queue):
+            track = self._queue[self._track_idx]
+            if track.end_ms > 0 and ms >= track.end_ms:
+                self._cue_advancing = True
+                self._advance()
 
     def _on_state_changed(self, state):
         self.state_changed.emit(state == QMediaPlayer.PlaybackState.PlayingState)
@@ -354,7 +491,8 @@ class PlayerEngine(QObject):
             "current_idx": self._track_idx,
             "tracks": [
                 {"path": t.path, "artist": t.artist, "title": t.title,
-                 "duration_ms": t.duration_ms, "row": t.row, "is_library": t.is_library}
+                 "duration_ms": t.duration_ms, "row": t.row, "is_library": t.is_library,
+                 "start_ms": t.start_ms, "end_ms": t.end_ms}
                 for t in self._queue
             ],
         }
@@ -386,6 +524,8 @@ class PlayerEngine(QObject):
                     title=t.get("title", ""),
                     duration_ms=t.get("duration_ms", 0),
                     is_library=t.get("is_library", False),
+                    start_ms=t.get("start_ms", 0),
+                    end_ms=t.get("end_ms", 0),
                 ))
 
         if not self._queue:

@@ -232,7 +232,7 @@ class PlayerEngine(QObject):
         self._player.playbackStateChanged.connect(self._on_state_changed)
         self._player.metaDataChanged.connect(self._on_metadata_changed)
         self._player.positionChanged.connect(self._on_position_changed)
-        self._player.durationChanged.connect(lambda ms: self.duration_changed.emit(int(ms)))
+        self._player.durationChanged.connect(self._on_file_duration_changed)
 
         self._media_devices = QMediaDevices(self)
         self._media_devices.audioOutputsChanged.connect(self._on_audio_device_changed)
@@ -380,6 +380,12 @@ class PlayerEngine(QObject):
         self._advance()
 
     def seek(self, ms: int):
+        # For CUE tracks the progress bar operates in track-relative time, so
+        # translate back to an absolute file position before seeking.
+        if 0 <= self._track_idx < len(self._queue):
+            track = self._queue[self._track_idx]
+            if track.start_ms > 0 or track.end_ms > 0:
+                ms = track.start_ms + ms
         self._audio.setVolume(0.0)
         self._player.setPosition(ms)
         QTimer.singleShot(80, self._apply_volume)
@@ -450,7 +456,9 @@ class PlayerEngine(QObject):
             # Natural CUE progression: end_ms[N] == start_ms[N+1], so the file is
             # already playing at the right position. Seeking would cause a click —
             # just update the track state and let the audio continue uninterrupted.
-            pass
+            # durationChanged won't fire (same file), so emit the track duration now.
+            if track.start_ms > 0 or track.end_ms > 0:
+                self.duration_changed.emit(track.duration_ms)
         else:
             # User-initiated jump within the same file — mute briefly to mask click.
             self._pending_seek = -1
@@ -460,6 +468,9 @@ class PlayerEngine(QObject):
             if not self.is_playing():
                 self._player.play()
             QTimer.singleShot(80, self._apply_volume)
+            # durationChanged won't fire (same file), so emit the track duration now.
+            if track.start_ms > 0 or track.end_ms > 0:
+                self.duration_changed.emit(track.duration_ms)
 
         self.track_changed.emit(track.row, track.path, idx, len(self._queue))
         if track.title:
@@ -496,15 +507,26 @@ class PlayerEngine(QObject):
         elif status == QMediaPlayer.MediaStatus.EndOfMedia:
             self._advance()
 
-    def _on_position_changed(self, ms: int):
-        self.position_changed.emit(ms)
-        if self._cue_advancing:
+    def _on_file_duration_changed(self, ms: int):
+        if ms <= 0:
             return
         if 0 <= self._track_idx < len(self._queue):
             track = self._queue[self._track_idx]
-            if track.end_ms > 0 and ms >= track.end_ms:
+            if track.start_ms > 0 or track.end_ms > 0:
+                self.duration_changed.emit(track.duration_ms)
+                return
+        self.duration_changed.emit(int(ms))
+
+    def _on_position_changed(self, ms: int):
+        if 0 <= self._track_idx < len(self._queue):
+            track = self._queue[self._track_idx]
+            is_cue = track.start_ms > 0 or track.end_ms > 0
+            self.position_changed.emit(max(0, ms - track.start_ms) if is_cue else ms)
+            if not self._cue_advancing and track.end_ms > 0 and ms >= track.end_ms:
                 self._cue_advancing = True
                 self._advance()
+        else:
+            self.position_changed.emit(ms)
 
     def _on_state_changed(self, state):
         self.state_changed.emit(state == QMediaPlayer.PlaybackState.PlayingState)

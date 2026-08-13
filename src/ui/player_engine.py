@@ -1,4 +1,5 @@
 import json
+import math
 import random
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,13 +76,21 @@ def _row_for_path(path: str, release_row: dict | None) -> tuple[dict, str, str, 
 
 
 def _duration_from_file(path: str) -> int:
-    """Total duration of an audio file in ms via mutagen."""
-    try:
-        af = MutagenFile(path)
-        if af and af.info:
-            return int(af.info.length * 1000)
-    except Exception:
-        pass
+    """Total duration of an audio file in ms via mutagen.
+
+    Uses ceil to avoid the edge case where int() truncation makes
+    total_ms land just below the last CUE track's start_ms.
+    Falls back to easy=True if the first attempt returns nothing.
+    """
+    for easy in (False, True):
+        try:
+            af = MutagenFile(path, easy=easy)
+            if af and af.info:
+                ms = math.ceil(getattr(af.info, "length", 0) * 1000)
+                if ms > 0:
+                    return ms
+        except Exception:
+            pass
     return 0
 
 

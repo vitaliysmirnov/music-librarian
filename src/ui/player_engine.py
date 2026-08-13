@@ -223,6 +223,8 @@ class PlayerEngine(QObject):
         self._pending_play:    bool = False  # whether to play after applying pending seek
         self._cue_advancing:   bool = False
         self._current_end_ms:  int  = 0     # end_ms of the track currently loaded; survives queue clear
+        self._is_cue_playback: bool = False  # True while a CUE track is active; suppresses Qt file metadata
+        self._last_track: QueueTrack | None = None  # last track played; survives queue clear for PLAY restart
 
         self._player = QMediaPlayer(self)
         self._audio  = QAudioOutput(self)
@@ -372,13 +374,27 @@ class PlayerEngine(QObject):
             self._player.play()
         elif self._queue:
             self._play_at(0)
+        elif self._last_track is not None:
+            # Queue was cleared; replay the last track from its beginning.
+            # Force Qt to clear its cached source so the subsequent setSource in
+            # _play_at is never a no-op (same URL → no LoadedMedia → no play).
+            self._player.setSource(QUrl())
+            self._queue.append(self._last_track)
+            self._play_at(0)
+            self.queue_changed.emit()
 
     def prev(self):
         if self._track_idx > 0:
             self._play_at(self._track_idx - 1)
 
     def next(self):
-        self._advance()
+        # Mirror prev(): if there is no next track, do nothing rather than stopping
+        # the current track. _advance() is still used for shuffle and for the case
+        # where _track_idx is uninitialised (< 0).
+        if self._track_idx < 0 or self._shuffle_mode:
+            self._advance()
+        elif self._track_idx + 1 < len(self._queue):
+            self._play_at(self._track_idx + 1)
 
     def seek(self, ms: int):
         # For CUE tracks the progress bar operates in track-relative time, so
@@ -387,6 +403,9 @@ class PlayerEngine(QObject):
             track = self._queue[self._track_idx]
             if track.start_ms > 0 or track.end_ms > 0:
                 ms = track.start_ms + ms
+        elif self._last_track is not None and (self._last_track.start_ms > 0 or self._last_track.end_ms > 0):
+            # Queue was cleared but a CUE track is still playing; translate relative → absolute.
+            ms = self._last_track.start_ms + ms
         self._audio.setVolume(0.0)
         self._player.setPosition(ms)
         QTimer.singleShot(80, self._apply_volume)
@@ -437,6 +456,8 @@ class PlayerEngine(QObject):
         self._track_idx = idx
         track = self._queue[idx]
         self._current_end_ms = track.end_ms
+        self._is_cue_playback = track.start_ms > 0 or track.end_ms > 0
+        self._last_track = track
         self._norm_gain = 1.0
         self._apply_volume()
         if self._normalize:
@@ -444,6 +465,10 @@ class PlayerEngine(QObject):
 
         if track.path != self._current_source:
             self._current_source = track.path
+            # Clear the Qt source first so that setSource always triggers
+            # LoadedMedia, even when reloading the same file (e.g. after queue
+            # clear + re-add of the same album while the file was still playing).
+            self._player.setSource(QUrl())
             if track.start_ms > 0:
                 # Delay play until LoadedMedia so we can seek before audio starts
                 self._pending_seek = track.start_ms
@@ -528,15 +553,28 @@ class PlayerEngine(QObject):
                 self._cue_advancing = True
                 self._advance()
         else:
-            self.position_changed.emit(ms)
-            # Queue was cleared while a CUE track was playing — respect its end boundary
+            # Queue was cleared while a CUE track was playing — emit relative position.
+            t = self._last_track
+            if t is not None and (t.start_ms > 0 or t.end_ms > 0):
+                self.position_changed.emit(max(0, ms - t.start_ms))
+            else:
+                self.position_changed.emit(ms)
             if not self._cue_advancing and self._current_end_ms > 0 and ms >= self._current_end_ms:
                 self._player.stop()
 
     def _on_state_changed(self, state):
         self.state_changed.emit(state == QMediaPlayer.PlaybackState.PlayingState)
+        if state == QMediaPlayer.PlaybackState.StoppedState:
+            self._cue_advancing = False
+            self.position_changed.emit(0)
 
     def _on_metadata_changed(self):
+        # For CUE tracks the correct per-track metadata is already emitted from
+        # _play_at. Qt's FFmpeg backend can fire metaDataChanged at chapter
+        # boundaries (advancing to the next chapter's tags) even when the queue
+        # is empty — suppress it to avoid showing the wrong track name.
+        if self._is_cue_playback:
+            return
         meta   = self._player.metaData()
         artist = (
             meta.stringValue(QMediaMetaData.Key.ContributingArtist) or

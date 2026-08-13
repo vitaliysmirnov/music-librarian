@@ -392,6 +392,9 @@ class PlayerBar(QWidget):
 
     def set_is_library_track(self, is_library: bool):
         self._is_library_track = is_library
+        self._btn_like.setEnabled(is_library)
+        if not is_library:
+            self.set_liked(False)
 
     def queue_button(self) -> QPushButton:
         return self._btn_queue

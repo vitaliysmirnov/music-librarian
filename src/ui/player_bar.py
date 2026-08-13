@@ -395,6 +395,8 @@ class PlayerBar(QWidget):
         self._btn_like.setEnabled(is_library)
         if not is_library:
             self.set_liked(False)
+        self._rebuild_track_label()
+        self._rebuild_meta_label()
 
     def queue_button(self) -> QPushButton:
         return self._btn_queue
@@ -457,22 +459,31 @@ class PlayerBar(QWidget):
             self._track_lbl.set_has_links(False)
             self._track_lbl.setToolTip("")
             return
-        c  = QApplication.palette().color(QPalette.ColorRole.WindowText).name()
+        c = QApplication.palette().color(QPalette.ColorRole.WindowText).name()
         parts: list[str] = []
-        if self._current_artist:
-            parts.append(self._make_link(
-                self._elide(self._current_artist, self._MAX_ARTIST),
-                "artist", self._current_artist, c,
-            ))
-        if self._current_artist and self._current_title:
-            parts.append(f'<span style="color:{c};">  —  </span>')
-        if self._current_title:
-            parts.append(self._make_link(
-                self._elide(self._current_title, self._MAX_TITLE),
-                "release", self._track_search(), c,
-            ))
+        if not self._is_library_track:
+            if self._current_artist:
+                parts.append(f'<span style="color:{c};">{html.escape(self._elide(self._current_artist, self._MAX_ARTIST))}</span>')
+            if self._current_artist and self._current_title:
+                parts.append(f'<span style="color:{c};">  —  </span>')
+            if self._current_title:
+                parts.append(f'<span style="color:{c};">{html.escape(self._elide(self._current_title, self._MAX_TITLE))}</span>')
+            self._track_lbl.set_has_links(False)
+        else:
+            if self._current_artist:
+                parts.append(self._make_link(
+                    self._elide(self._current_artist, self._MAX_ARTIST),
+                    "artist", self._current_artist, c,
+                ))
+            if self._current_artist and self._current_title:
+                parts.append(f'<span style="color:{c};">  —  </span>')
+            if self._current_title:
+                parts.append(self._make_link(
+                    self._elide(self._current_title, self._MAX_TITLE),
+                    "release", self._track_search(), c,
+                ))
+            self._track_lbl.set_has_links(True)
         self._track_lbl.setText("".join(parts))
-        self._track_lbl.set_has_links(True)
         truncated = (len(self._current_artist) > self._MAX_ARTIST or
                      len(self._current_title)  > self._MAX_TITLE)
         tip = " — ".join(p for p in [self._current_artist, self._current_title] if p)
@@ -503,6 +514,9 @@ class PlayerBar(QWidget):
                     self._elide(album, self._MAX_ALBUM),
                     "liked", "", c,
                 ))
+        elif not self._is_library_track:
+            if album:
+                parts.append(f'<span style="color:{c};">{html.escape(self._elide(album, self._MAX_ALBUM))}</span>')
         else:
             as_ = self._album_search()
             if album:
@@ -519,7 +533,7 @@ class PlayerBar(QWidget):
                 ))
 
         self._meta_lbl.setText("".join(parts))
-        self._meta_lbl.set_has_links(bool(parts))
+        self._meta_lbl.set_has_links(bool(parts) and self._is_library_track)
         truncated = (len(album)  > self._MAX_ALBUM or
                      len(cat_no) > self._MAX_CATNO)
         tip = " — ".join(p for p in [album, cat_no] if p)
@@ -536,18 +550,19 @@ class PlayerBar(QWidget):
 
         menu = QMenu(self)
 
+        go_label = "Go to Folder" if not self._is_library_track else "Go to Release"
         if sender is self._meta_lbl:
             # For playlist/liked: left-click already navigates via the link;
             # right-click context menu is not useful — suppress it.
             if self._nav_kind in ("playlist", "liked"):
                 return
-            act_go = menu.addAction("Go to Release")
+            act_go = menu.addAction(go_label)
             chosen = menu.exec(sender.mapToGlobal(pos))
             if chosen == act_go:
                 self.go_to_release_requested.emit(folder_path)
         else:
             # Track label: Go to Release + Add to Playlist
-            act_go = menu.addAction("Go to Release")
+            act_go = menu.addAction(go_label)
             pl_actions: dict = {}
             if self._is_library_track and self._playlists:
                 menu.addSeparator()

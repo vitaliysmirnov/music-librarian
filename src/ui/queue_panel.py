@@ -424,7 +424,8 @@ class QueuePanel(QFrame):
             folder_path = str(Path(track.path).parent)
 
         menu = QMenu(self)
-        act_go = menu.addAction("Go to Release")
+        go_label = "Go to Folder" if not track.is_library else "Go to Release"
+        act_go = menu.addAction(go_label)
 
         pl_actions: dict = {}
         if track.is_library and self._playlists:

@@ -232,6 +232,7 @@ class PlayerEngine(QObject):
         self._current_end_ms:  int  = 0     # end_ms of the track currently loaded; survives queue clear
         self._is_cue_playback: bool = False  # True while a CUE track is active; suppresses Qt file metadata
         self._last_track: QueueTrack | None = None  # last track played; survives queue clear for PLAY restart
+        self._seek_gen:        int  = 0     # incremented on every seek to cancel stale fade-in timers
 
         self._player = QMediaPlayer(self)
         self._audio  = QAudioOutput(self)
@@ -449,11 +450,31 @@ class PlayerEngine(QObject):
             ms = self._last_track.start_ms + ms
         self._audio.setVolume(0.0)
         self._player.setPosition(ms)
-        QTimer.singleShot(80, self._apply_volume)
+        self._start_volume_fade_in()
 
     def set_volume(self, v: float):
         self._user_volume = max(0.0, min(1.0, v))
+        self._seek_gen += 1   # cancel any in-progress seek fade
         self._apply_volume()
+
+    def _start_volume_fade_in(self):
+        """Schedule a gradual volume restore after a seek.
+
+        Keeps silence for 120 ms (enough for the codec pipeline to flush the
+        seek-point discontinuity), then ramps to full volume over 4 × 25 ms
+        steps.  A generation counter makes stale timers from a previous seek
+        no-ops, so rapid scrubbing never fights itself.
+        """
+        self._seek_gen += 1
+        gen = self._seek_gen
+        for i, frac in enumerate([0.25, 0.5, 0.75, 1.0]):
+            QTimer.singleShot(120 + i * 25, lambda f=frac, g=gen: self._seek_fade_step(f, g))
+
+    def _seek_fade_step(self, frac: float, gen: int):
+        if gen != self._seek_gen:
+            return
+        target = self._user_volume * self._norm_gain if self._normalize else self._user_volume
+        self._audio.setVolume(max(0.0, min(1.0, target * frac)))
 
     def set_normalize(self, enabled: bool):
         self._normalize = enabled
@@ -538,7 +559,7 @@ class PlayerEngine(QObject):
             self._player.setPosition(track.start_ms)
             if not self.is_playing():
                 self._player.play()
-            QTimer.singleShot(80, self._apply_volume)
+            self._start_volume_fade_in()
             # durationChanged won't fire (same file), so emit the track duration now.
             if track.start_ms > 0 or track.end_ms > 0:
                 self.duration_changed.emit(track.duration_ms)

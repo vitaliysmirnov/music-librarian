@@ -196,6 +196,7 @@ class MainWindow(QMainWindow):
         self._settings_tab.normalize_changed.connect(self._player_engine.set_normalize)
         self._tabs.currentChanged.connect(self._on_tab_changed)
         self._releases_tab.release_trashed.connect(self._update_info_label)
+        self._releases_tab.release_trashed.connect(self._releases_tab.refresh_liked)
         self._releases_tab.play_requested.connect(self._player_engine.play_release)
         self._releases_tab.enqueue_requested.connect(self._player_engine.enqueue_release)
         self._releases_tab.play_track_requested.connect(self._player_engine.play_tracks)

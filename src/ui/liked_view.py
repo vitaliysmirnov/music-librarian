@@ -231,6 +231,7 @@ class LikedTracksView(QWidget):
     def __init__(self, db, parent=None):
         super().__init__(parent)
         self._db = db
+        self._header_state: QByteArray | None = None
         self._setup_ui()
 
     def _setup_ui(self):
@@ -261,15 +262,16 @@ class LikedTracksView(QWidget):
 
         hdr = self._table.horizontalHeader()
         hdr.setStretchLastSection(False)
-        hdr.setSectionsMovable(False)
+        hdr.setSectionsMovable(True)
         hdr.setSortIndicatorShown(True)
         hdr.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        hdr.setSectionResizeMode(QHeaderView.Interactive)
         for col, w in enumerate(_WIDTHS):
-            if col == COL_TITLE or col == COL_ALBUM:
-                hdr.setSectionResizeMode(col, QHeaderView.Stretch)
-            else:
-                hdr.setSectionResizeMode(col, QHeaderView.Fixed)
-                hdr.resizeSection(col, w)
+            hdr.resizeSection(col, w)
+        hdr.sectionResized.connect(self._save_header_state)
+        hdr.sectionMoved.connect(self._save_header_state)
+        hdr.setContextMenuPolicy(Qt.CustomContextMenu)
+        hdr.customContextMenuRequested.connect(self._show_header_menu)
 
         self._table.setItemDelegate(ElidedTooltipDelegate(self._table))
         self._table.setItemDelegateForColumn(
@@ -297,6 +299,7 @@ class LikedTracksView(QWidget):
         self._play_all_btn.setEnabled(False)
         self._play_all_btn.clicked.connect(self._play_all)
         bb.addWidget(self._play_all_btn)
+
         bb.addStretch()
 
         self._stats_label = QLabel("")
@@ -304,7 +307,71 @@ class LikedTracksView(QWidget):
             "font-size: 11px; font-weight: 600; color: palette(placeholderText);"
         )
         bb.addWidget(self._stats_label)
+
+        bb.addStretch()
+
+        reset_btn = QPushButton("Reset View")
+        reset_btn.setToolTip("Restore default column order and widths")
+        reset_btn.clicked.connect(self._reset_header)
+        bb.addWidget(reset_btn)
         layout.addWidget(bb_widget)
+        self._restore_header_state()
+
+    def _save_header_state(self, *_):
+        state = self._table.horizontalHeader().saveState()
+        if self._header_state is not None and state == self._header_state:
+            return
+        self._header_state = state
+        self._db.set_setting("liked_header_state_v1", state.toBase64().data().decode())
+
+    def _restore_header_state(self):
+        if self._header_state is None:
+            raw = self._db.get_setting("liked_header_state_v1", "")
+            if not raw:
+                return
+            try:
+                self._header_state = QByteArray.fromBase64(raw.encode())
+            except Exception:
+                return
+        try:
+            self._table.horizontalHeader().restoreState(self._header_state)
+        except Exception:
+            pass
+
+    def _apply_default_widths(self):
+        hdr = self._table.horizontalHeader()
+        hdr.blockSignals(True)
+        for logical in range(hdr.count()):
+            visual_now = hdr.visualIndex(logical)
+            if visual_now != logical:
+                hdr.moveSection(visual_now, logical)
+        for col, w in enumerate(_WIDTHS):
+            hdr.resizeSection(col, w)
+        hdr.blockSignals(False)
+        self._table.viewport().update()
+
+    def _reset_header(self):
+        self._apply_default_widths()
+        hdr = self._table.horizontalHeader()
+        for i in range(hdr.count()):
+            hdr.setSectionHidden(i, False)
+        self._save_header_state()
+
+    def _show_header_menu(self, pos):
+        hdr = self._table.horizontalHeader()
+        menu = QMenu(self)
+        for logical_idx, name in enumerate(_HEADERS):
+            if logical_idx == COL_LIKE:
+                continue
+            action = menu.addAction(name)
+            action.setCheckable(True)
+            action.setChecked(not hdr.isSectionHidden(logical_idx))
+            action.setData(logical_idx)
+        chosen = menu.exec(hdr.mapToGlobal(pos))
+        if chosen is not None:
+            logical_idx = chosen.data()
+            hdr.setSectionHidden(logical_idx, not chosen.isChecked())
+            self._save_header_state()
 
     def refresh(self) -> None:
         rows = []

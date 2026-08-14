@@ -705,6 +705,7 @@ class MainWindow(QMainWindow):
         self._refresh_all()
 
     def _refresh_all(self):
+        self._db.cleanup_orphaned_tracks()
         self._releases_tab.refresh()
         self._sources_tab.refresh()
         self._update_info_label()

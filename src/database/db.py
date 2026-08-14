@@ -432,6 +432,16 @@ class Database:
             if cur.rowcount:
                 log.debug("delete_release_by_path: deleted %d row(s) for %r", cur.rowcount, folder_path)
 
+    def cleanup_orphaned_tracks(self):
+        """Remove liked/playlist tracks whose release no longer exists in the DB."""
+        with self.conn() as c:
+            c.execute(
+                "DELETE FROM liked_tracks WHERE folder_path NOT IN (SELECT folder_path FROM releases)"
+            )
+            c.execute(
+                "DELETE FROM playlist_tracks WHERE folder_path NOT IN (SELECT folder_path FROM releases)"
+            )
+
     def set_release_availability(self, folder_path: str, available: bool):
         with self.conn() as c:
             c.execute(

@@ -830,6 +830,7 @@ class _ReleasesView(QWidget):
 
         menu.addSeparator()
         act_delete = menu.addAction("Move to Trash")
+        act_delete.setEnabled(available)
 
         chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
         if chosen is None:

@@ -705,6 +705,16 @@ class _ReleasesView(QWidget):
         row = self._selected_row()
         if not row:
             return
+        if not row.get("is_available", True):
+            artist = row.get("artist", "")
+            title  = row.get("title", "")
+            label  = f"«{artist} — {title}»" if artist and title else f"«{title or artist}»"
+            QMessageBox.information(
+                self, "Source Disconnected",
+                f"{label}\n\nThis release's source drive is currently disconnected.\n"
+                "Reconnect it to view the tracklist.",
+            )
+            return
         if self._tracklist_popup is not None:
             self._tracklist_popup.close()
         self._tracklist_popup = TracklistPopup(row, self._db, self.window())

@@ -415,6 +415,16 @@ class Database:
 
     def delete_release_by_path(self, folder_path: str):
         with self.conn() as c:
+            # Collect every folder_path being removed (parent + disc children).
+            rows = c.execute(
+                "SELECT folder_path FROM releases WHERE folder_path=? OR parent_path=?",
+                (folder_path, folder_path),
+            ).fetchall()
+            if rows:
+                paths = [r[0] for r in rows]
+                ph = ",".join("?" * len(paths))
+                c.execute(f"DELETE FROM liked_tracks WHERE folder_path IN ({ph})", paths)
+                c.execute(f"DELETE FROM playlist_tracks WHERE folder_path IN ({ph})", paths)
             cur = c.execute(
                 "DELETE FROM releases WHERE folder_path=? OR parent_path=?",
                 (folder_path, folder_path),

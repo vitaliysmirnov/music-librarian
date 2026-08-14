@@ -137,28 +137,31 @@ def _cue_queue_tracks(
 
 
 def _queue_entries_for_folder(folder_path: str, release_row: dict | None) -> list["QueueTrack"]:
-    """Return QueueTrack list for a folder, expanding a CUE sheet if present."""
-    folder = Path(folder_path)
-    cue_path = find_cue_for_folder(folder)
-    if cue_path:
-        audio_file, album_artist, album_title, cue_tracks = parse_cue(cue_path)
-        if audio_file and cue_tracks:
-            row = release_row or {
-                "folder_path": folder_path,
-                "title":          album_title,
-                "artist":         album_artist,
-                "catalog_number": "",
-            }
-            return _cue_queue_tracks(
-                cue_tracks, str(audio_file), album_artist,
-                row, is_library=release_row is not None,
-            )
+    """Return QueueTrack list for a folder, expanding a CUE sheet only when the
+    folder contains exactly one audio file (single-file CUE album)."""
+    audio_files = _audio_paths(folder_path)
 
-    # No CUE — regular audio files
+    if len(audio_files) == 1:
+        cue_path = find_cue_for_folder(Path(folder_path))
+        if cue_path:
+            audio_file, album_artist, album_title, cue_tracks = parse_cue(cue_path)
+            if audio_file and cue_tracks:
+                row = release_row or {
+                    "folder_path": folder_path,
+                    "title":          album_title,
+                    "artist":         album_artist,
+                    "catalog_number": "",
+                }
+                return _cue_queue_tracks(
+                    cue_tracks, str(audio_file), album_artist,
+                    row, is_library=release_row is not None,
+                )
+
+    # Multiple audio files, or single file with no CUE — treat each file individually.
     is_library = release_row is not None
     bare = not (release_row or {}).get("title")
     result = []
-    for p in _audio_paths(folder_path):
+    for p in audio_files:
         track_row, artist, title, duration_ms = _row_for_path(p, None if bare else release_row)
         result.append(QueueTrack(
             row=track_row, path=p, artist=artist, title=title,
@@ -168,7 +171,10 @@ def _queue_entries_for_folder(folder_path: str, release_row: dict | None) -> lis
 
 
 def _cue_entries_for_single_file(path: str) -> list["QueueTrack"] | None:
-    """If a lone audio file has a matching CUE, return expanded entries; else None."""
+    """If a file is the sole audio file in its folder and a CUE exists, return
+    expanded CUE entries; else None."""
+    if len(_audio_paths(str(Path(path).parent))) != 1:
+        return None
     cue_path = find_cue_for_file(Path(path))
     if not cue_path:
         return None

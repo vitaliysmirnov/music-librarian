@@ -373,6 +373,7 @@ class Database:
                      disc_number, is_multi_disc, parent_path, date_added)
                 VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?)
                 ON CONFLICT(folder_path) DO UPDATE SET
+                    source_id=excluded.source_id,
                     artist=excluded.artist,
                     year_recorded=excluded.year_recorded,
                     title=excluded.title,

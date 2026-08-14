@@ -1,3 +1,5 @@
+import json
+
 from PySide6.QtCore import QEvent, Qt, QByteArray, QMimeData, QPoint, QPointF, QRectF, QSize, Signal
 from PySide6.QtGui import QBrush, QColor, QDrag, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget, QWidgetAction
@@ -175,7 +177,7 @@ class _DestructiveAction(QWidgetAction):
 
 class _PlaylistButton(QPushButton):
     """Playlist nav button that also accepts URL drops to add tracks."""
-    tracks_dropped   = Signal(int, list)        # playlist_id, list[QUrl]
+    tracks_dropped   = Signal(int, list, list)  # playlist_id, list[QUrl], cue_meta
     rename_requested = Signal(int, str)         # playlist_id, current_name
     delete_requested = Signal(int)              # playlist_id
 
@@ -248,7 +250,15 @@ class _PlaylistButton(QPushButton):
         self.style().unpolish(self)
         self.style().polish(self)
         if event.mimeData().hasUrls():
-            self.tracks_dropped.emit(self._playlist_id, event.mimeData().urls())
+            cue_meta = []
+            if event.mimeData().hasFormat("application/x-cue-track-meta"):
+                try:
+                    cue_meta = json.loads(
+                        bytes(event.mimeData().data("application/x-cue-track-meta")).decode()
+                    )
+                except Exception:
+                    pass
+            self.tracks_dropped.emit(self._playlist_id, event.mimeData().urls(), cue_meta)
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -352,7 +362,7 @@ class SidebarPanel(QWidget):
     rename_playlist_requested   = Signal(int, str)     # playlist_id, current_name
     delete_playlist_requested   = Signal(int)          # playlist_id
     reorder_playlists_requested = Signal(list)         # new ordered list of playlist ids
-    tracks_dropped_on_playlist  = Signal(int, list)    # playlist_id, list[QUrl]
+    tracks_dropped_on_playlist  = Signal(int, list, list)  # playlist_id, list[QUrl], cue_meta
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -456,7 +466,7 @@ class SidebarPanel(QWidget):
             btn.setIcon(QIcon(self._pix_off["playlist"]))
             btn.setIconSize(QSize(_ICON_PX, _ICON_PX))
             btn.clicked.connect(lambda _c, k=f"playlist:{pid}": self._on_click(k))
-            btn.tracks_dropped.connect(lambda pid_, urls: self.tracks_dropped_on_playlist.emit(pid_, urls))
+            btn.tracks_dropped.connect(lambda pid_, urls, cue: self.tracks_dropped_on_playlist.emit(pid_, urls, cue))
             btn.rename_requested.connect(self.rename_playlist_requested)
             btn.delete_requested.connect(self.delete_playlist_requested)
             self._playlists_layout.addWidget(btn)

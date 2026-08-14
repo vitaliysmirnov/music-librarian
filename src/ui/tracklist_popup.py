@@ -290,27 +290,45 @@ class TracklistPopup(QDialog):
         selected = self._lw.selectedItems()
         if not selected:
             selected = [item]
-        paths = [
-            self._paths[self._lw.row(i)]
+        indices = [
+            self._lw.row(i)
             for i in selected
             if 0 <= self._lw.row(i) < len(self._paths)
         ]
-        urls = [QUrl.fromLocalFile(p) for p in paths if Path(p).is_file()]
-        if not urls:
+        live_indices = [i for i in indices if Path(self._paths[i]).is_file()]
+        if not live_indices:
             return
+        urls = [QUrl.fromLocalFile(self._paths[i]) for i in live_indices]
         meta = {
-            p: {
+            self._paths[i]: {
                 "folder_path":    self._release_row.get("folder_path", ""),
                 "title":          self._release_row.get("title", ""),
                 "catalog_number": self._release_row.get("catalog_number", ""),
                 "artist":         self._release_row.get("artist", ""),
             }
-            for p in paths if Path(p).is_file()
+            for i in live_indices
         }
         mime = QMimeData()
         mime.setUrls(urls)
         mime.setData("application/x-release-meta",
                      QByteArray(json.dumps(meta).encode()))
+        if self._is_cue:
+            cue_meta = []
+            for i in live_indices:
+                artist, title, dur = self._tracks[i]
+                s_ms, e_ms = self._cue_offsets[i]
+                cue_meta.append({
+                    "path":        self._paths[i],
+                    "start_ms":    s_ms,
+                    "end_ms":      e_ms,
+                    "artist":      artist,
+                    "title":       title,
+                    "duration_ms": dur,
+                    "album":       self._album,
+                    "folder_path": self._folder_path,
+                })
+            mime.setData("application/x-cue-track-meta",
+                         QByteArray(json.dumps(cue_meta).encode()))
         drag = QDrag(self._lw)
         drag.setMimeData(mime)
         drag.exec(Qt.DropAction.CopyAction)

@@ -1291,18 +1291,35 @@ class ReleasesTab(QWidget):
         self._sidebar.refresh_playlists(playlists)
         self.playlists_changed.emit(playlists)
 
-    def _on_tracks_dropped_on_playlist(self, playlist_id: int, urls: list) -> None:
-        from src.ui.player_engine import _read_full_tags
-        for url in urls:
-            local = url.toLocalFile()
-            if not local:
-                continue
-            p = Path(local)
-            if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS:
-                artist, title, album, duration_ms = _read_full_tags(str(p))
+    def _on_tracks_dropped_on_playlist(self, playlist_id: int, urls: list, cue_meta: list = None) -> None:
+        if cue_meta:
+            for entry in cue_meta:
+                path = entry.get("path", "")
+                if not Path(path).is_file():
+                    continue
                 self._db.add_track_to_playlist(
-                    playlist_id, str(p), artist, title, album, str(p.parent), duration_ms,
+                    playlist_id,
+                    path,
+                    entry.get("artist", ""),
+                    entry.get("title", ""),
+                    entry.get("album", ""),
+                    entry.get("folder_path", str(Path(path).parent)),
+                    entry.get("duration_ms", 0),
+                    entry.get("start_ms", 0),
+                    entry.get("end_ms", 0),
                 )
+        else:
+            from src.ui.player_engine import _read_full_tags
+            for url in urls:
+                local = url.toLocalFile()
+                if not local:
+                    continue
+                p = Path(local)
+                if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS:
+                    artist, title, album, duration_ms = _read_full_tags(str(p))
+                    self._db.add_track_to_playlist(
+                        playlist_id, str(p), artist, title, album, str(p.parent), duration_ms,
+                    )
         self._on_popup_playlist_track_added(playlist_id)
 
     def _on_nav(self, key: str):

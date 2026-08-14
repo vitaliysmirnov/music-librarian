@@ -174,6 +174,7 @@ class _PlaylistTableView(QTableView):
     def __init__(self):
         super().__init__()
         self._drag_start: QPoint | None = None
+        self._cue_drop_meta: list = []
         self.setAcceptDrops(True)
         self.setMouseTracking(True)
         self._drop_line = _DropLine(self.viewport())
@@ -307,6 +308,14 @@ class _PlaylistTableView(QTableView):
             event.acceptProposedAction()
 
         elif event.mimeData().hasUrls():
+            self._cue_drop_meta = []
+            if event.mimeData().hasFormat("application/x-cue-track-meta"):
+                try:
+                    self._cue_drop_meta = json.loads(
+                        bytes(event.mimeData().data("application/x-cue-track-meta")).decode()
+                    )
+                except Exception:
+                    pass
             self.urls_dropped.emit(event.mimeData().urls())
             event.acceptProposedAction()
         else:
@@ -607,29 +616,51 @@ class PlaylistView(QWidget):
     def _on_urls_dropped(self, urls: list):
         if self._playlist_id is None:
             return
-        from src.ui.player_engine import _read_full_tags
         added = False
-        for url in urls:
-            local = url.toLocalFile()
-            if not local:
-                continue
-            p = Path(local)
-            if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS:
-                artist, title, album, duration_ms = _read_full_tags(str(p))
+        cue_meta = self._table._cue_drop_meta
+        self._table._cue_drop_meta = []
+
+        if cue_meta:
+            for entry in cue_meta:
+                path = entry.get("path", "")
+                if not Path(path).is_file():
+                    continue
                 self._db.add_track_to_playlist(
-                    self._playlist_id, str(p), artist, title,
-                    album, str(p.parent), duration_ms,
+                    self._playlist_id,
+                    path,
+                    entry.get("artist", ""),
+                    entry.get("title", ""),
+                    entry.get("album", ""),
+                    entry.get("folder_path", str(Path(path).parent)),
+                    entry.get("duration_ms", 0),
+                    entry.get("start_ms", 0),
+                    entry.get("end_ms", 0),
                 )
                 added = True
-            elif p.is_dir():
-                for f in sorted(p.iterdir()):
-                    if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS:
-                        artist, title, album, duration_ms = _read_full_tags(str(f))
-                        self._db.add_track_to_playlist(
-                            self._playlist_id, str(f), artist, title,
-                            album, str(p), duration_ms,
-                        )
-                        added = True
+        else:
+            from src.ui.player_engine import _read_full_tags
+            for url in urls:
+                local = url.toLocalFile()
+                if not local:
+                    continue
+                p = Path(local)
+                if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS:
+                    artist, title, album, duration_ms = _read_full_tags(str(p))
+                    self._db.add_track_to_playlist(
+                        self._playlist_id, str(p), artist, title,
+                        album, str(p.parent), duration_ms,
+                    )
+                    added = True
+                elif p.is_dir():
+                    for f in sorted(p.iterdir()):
+                        if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS:
+                            artist, title, album, duration_ms = _read_full_tags(str(f))
+                            self._db.add_track_to_playlist(
+                                self._playlist_id, str(f), artist, title,
+                                album, str(p), duration_ms,
+                            )
+                            added = True
+
         if added:
             self._refresh_model()
             self.tracks_changed.emit(self._playlist_id)

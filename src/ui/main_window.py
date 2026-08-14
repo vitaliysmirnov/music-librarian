@@ -278,9 +278,7 @@ class MainWindow(QMainWindow):
         qt = q[track_idx] if 0 <= track_idx < len(q) else None
         start_ms = qt.start_ms if qt and qt.path == path else 0
         self._player_bar.set_liked(self._db.is_track_liked(path, start_ms))
-        folder_path = (row or {}).get("folder_path", "")
-        is_library = bool(folder_path and self._db.get_release_by_path(folder_path))
-        self._player_bar.set_is_library_track(is_library)
+        self._player_bar.set_is_library_track(qt.is_library if qt else False)
 
     def _on_tray_metadata(self, artist: str, title: str):
         tip = f"{artist} — {title}" if artist else title

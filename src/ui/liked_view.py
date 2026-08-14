@@ -83,6 +83,10 @@ class LikedTracksModel(QAbstractTableModel):
             if col == COL_LIKE:   return ""
         if role == Qt.UserRole:
             return row
+        if role == Qt.ForegroundRole:
+            if not row.get("is_available", True):
+                return QColor("#e05060")
+            return None
         return None
 
     def get_row(self, source_row: int) -> dict | None:
@@ -377,6 +381,7 @@ class LikedTracksView(QWidget):
         rows = []
         for r in self._db.get_liked_tracks():
             row = dict(r) | {"is_liked": True}
+            row["is_available"] = Path(row["path"]).is_file()
             release = self._db.get_release_by_path(row.get("folder_path", ""))
             row["catalog_number"] = (dict(release).get("catalog_number") or "") if release else ""
             rows.append(row)
@@ -425,23 +430,46 @@ class LikedTracksView(QWidget):
 
     def _on_double_click(self, proxy_index: QModelIndex):
         row = self._selected_row()
-        if row and Path(row["path"]).is_file():
-            release_row = {"folder_path": row["folder_path"],
-                           "title": row["album"], "artist": row["artist"],
-                           "catalog_number": row.get("catalog_number", ""),
-                           "_track_meta": [self._track_meta_for(row)]}
-            self.play_track_requested.emit([row["path"]], release_row)
+        if not row:
+            return
+        actual = Path(row["path"]).is_file()
+        if actual != row.get("is_available", True):
+            self.refresh()
+        if not actual:
+            QMessageBox.information(
+                self, "Track Not Found",
+                "This track could not be found on disk.\nIt may have been deleted.",
+            )
+            return
+        release_row = {"folder_path": row["folder_path"],
+                       "title": row["album"], "artist": row["artist"],
+                       "catalog_number": row.get("catalog_number", ""),
+                       "_track_meta": [self._track_meta_for(row)]}
+        self.play_track_requested.emit([row["path"]], release_row)
 
     def _play_selected(self):
         row = self._selected_row()
-        if row and Path(row["path"]).is_file():
-            release_row = {"folder_path": row["folder_path"],
-                           "title": row["album"], "artist": row["artist"],
-                           "catalog_number": row.get("catalog_number", ""),
-                           "_track_meta": [self._track_meta_for(row)]}
-            self.play_track_requested.emit([row["path"]], release_row)
+        if not row:
+            return
+        actual = Path(row["path"]).is_file()
+        if actual != row.get("is_available", True):
+            self.refresh()
+        if not actual:
+            QMessageBox.information(
+                self, "Track Not Found",
+                "This track could not be found on disk.\nIt may have been deleted.",
+            )
+            return
+        release_row = {"folder_path": row["folder_path"],
+                       "title": row["album"], "artist": row["artist"],
+                       "catalog_number": row.get("catalog_number", ""),
+                       "_track_meta": [self._track_meta_for(row)]}
+        self.play_track_requested.emit([row["path"]], release_row)
 
     def _play_all(self):
+        if any(Path(r["path"]).is_file() != r.get("is_available", True)
+               for r in self._all_rows_in_order()):
+            self.refresh()
         rows = [r for r in self._all_rows_in_order() if Path(r["path"]).is_file()]
         if not rows:
             return
@@ -492,10 +520,16 @@ class LikedTracksView(QWidget):
             return
         available = Path(row["path"]).is_file()
         menu = QMenu(self)
+
+        if not available:
+            act_unlike = menu.addAction("Remove from Liked")
+            chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
+            if chosen == act_unlike:
+                self._unlike_selected()
+            return
+
         act_play       = menu.addAction("Play Now")
         act_enqueue    = menu.addAction("Add to Queue")
-        act_play.setEnabled(available)
-        act_enqueue.setEnabled(available)
 
         pl_actions: dict = {}
         playlists = self._db.get_playlists() if self._db is not None else []

@@ -10,7 +10,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QDrag, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QHBoxLayout, QHeaderView,
-    QLabel, QMenu, QPushButton, QStyle, QStyledItemDelegate,
+    QLabel, QMenu, QMessageBox, QPushButton, QStyle, QStyledItemDelegate,
     QStyleOptionViewItem, QTableView, QVBoxLayout, QWidget,
 )
 
@@ -104,6 +104,10 @@ class PlaylistModel(QAbstractTableModel):
             if col == COL_LIKE:   return ""
         if role == Qt.UserRole:
             return row
+        if role == Qt.ForegroundRole:
+            if not row.get("is_available", True):
+                return QColor("#e05060")
+            return None
         return None
 
     def get_row(self, row_index: int) -> dict | None:
@@ -492,6 +496,7 @@ class PlaylistView(QWidget):
         rows = []
         for r in self._db.get_playlist_tracks(self._playlist_id):
             row = dict(r) | {"is_liked": self._db.is_track_liked(r["path"], r["start_ms"])}
+            row["is_available"] = Path(row["path"]).is_file()
             release = self._db.get_release_by_path(row.get("folder_path", ""))
             row["catalog_number"] = (dict(release).get("catalog_number") or "") if release else ""
             rows.append(row)
@@ -529,23 +534,46 @@ class PlaylistView(QWidget):
 
     def _on_double_click(self, index: QModelIndex):
         row = self._model.get_row(index.row())
-        if row and Path(row["path"]).is_file():
-            release_row = {"folder_path": row["folder_path"],
-                           "title": row["album"], "artist": row["artist"],
-                           "catalog_number": row.get("catalog_number", ""),
-                           "_track_meta": [self._track_meta_for(row)]}
-            self.play_track_requested.emit([row["path"]], release_row)
+        if not row:
+            return
+        actual = Path(row["path"]).is_file()
+        if actual != row.get("is_available", True):
+            self._refresh_model()
+        if not actual:
+            QMessageBox.information(
+                self, "Track Not Found",
+                "This track could not be found on disk.\nIt may have been deleted.",
+            )
+            return
+        release_row = {"folder_path": row["folder_path"],
+                       "title": row["album"], "artist": row["artist"],
+                       "catalog_number": row.get("catalog_number", ""),
+                       "_track_meta": [self._track_meta_for(row)]}
+        self.play_track_requested.emit([row["path"]], release_row)
 
     def _play_selected(self):
         row = self._selected_row()
-        if row and Path(row["path"]).is_file():
-            release_row = {"folder_path": row["folder_path"],
-                           "title": row["album"], "artist": row["artist"],
-                           "catalog_number": row.get("catalog_number", ""),
-                           "_track_meta": [self._track_meta_for(row)]}
-            self.play_track_requested.emit([row["path"]], release_row)
+        if not row:
+            return
+        actual = Path(row["path"]).is_file()
+        if actual != row.get("is_available", True):
+            self._refresh_model()
+        if not actual:
+            QMessageBox.information(
+                self, "Track Not Found",
+                "This track could not be found on disk.\nIt may have been deleted.",
+            )
+            return
+        release_row = {"folder_path": row["folder_path"],
+                       "title": row["album"], "artist": row["artist"],
+                       "catalog_number": row.get("catalog_number", ""),
+                       "_track_meta": [self._track_meta_for(row)]}
+        self.play_track_requested.emit([row["path"]], release_row)
 
     def _play_all(self):
+        if any(Path(r["path"]).is_file() != r.get("is_available", True)
+               for r in self._model._rows):
+            self._refresh_model()
         rows = [r for r in self._model._rows if Path(r["path"]).is_file()]
         if not rows:
             return
@@ -678,14 +706,20 @@ class PlaylistView(QWidget):
         if not row:
             return
         available = Path(row["path"]).is_file()
+        menu = QMenu(self)
+
+        if not available:
+            act_remove = menu.addAction("Remove from Playlist")
+            chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
+            if chosen == act_remove:
+                self._remove_selected()
+            return
+
         is_liked  = self._db is not None and self._db.is_track_liked(
             row["path"], row.get("start_ms", 0)
         )
-        menu = QMenu(self)
         act_play    = menu.addAction("Play Now")
         act_enqueue = menu.addAction("Add to Queue")
-        act_play.setEnabled(available)
-        act_enqueue.setEnabled(available)
         menu.addSeparator()
         act_like       = menu.addAction("Unlike" if is_liked else "Like")
         act_go_release = menu.addAction("Go to Release")

@@ -218,6 +218,7 @@ class MainWindow(QMainWindow):
         self._player_engine.track_changed.connect(self._on_track_changed_liked)
         self._player_engine.metadata_changed.connect(self._on_tray_metadata)
         self._player_engine.state_changed.connect(self._on_tray_state)
+        self._player_engine.track_not_found.connect(self._on_track_not_found)
 
         sb = QStatusBar()
         self.setStatusBar(sb)
@@ -286,6 +287,13 @@ class MainWindow(QMainWindow):
     def _on_tray_state(self, playing: bool):
         if not playing:
             self._update_tray_tooltip("Music Librarian")
+
+    def _on_track_not_found(self, artist: str, title: str):
+        label = f"«{artist} – {title}»" if artist else f"«{title}»"
+        QMessageBox.information(
+            self, "Track Not Found",
+            f"{label}\n\nThis track could not be found on disk.\nIt may have been deleted.",
+        )
 
     def _update_tray_tooltip(self, text: str):
         if sys.platform == "darwin":

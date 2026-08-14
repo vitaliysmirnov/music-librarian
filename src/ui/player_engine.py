@@ -210,6 +210,7 @@ class PlayerEngine(QObject):
     position_changed = Signal(int)        # ms
     duration_changed = Signal(int)        # ms
     queue_changed    = Signal()
+    track_not_found  = Signal(str, str)  # artist, title — file missing on play attempt
     _norm_ready      = Signal(str, float) # path, gain_linear — internal use only
 
     def __init__(self, parent=None):
@@ -509,6 +510,9 @@ class PlayerEngine(QObject):
             # LoadedMedia, even when reloading the same file (e.g. after queue
             # clear + re-add of the same album while the file was still playing).
             self._player.setSource(QUrl())
+            if not Path(track.path).is_file():
+                self.track_not_found.emit(track.artist or "", track.title or "")
+                return
             if track.start_ms > 0:
                 # Delay play until LoadedMedia so we can seek before audio starts
                 self._pending_seek = track.start_ms

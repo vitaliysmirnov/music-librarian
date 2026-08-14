@@ -1354,6 +1354,8 @@ class ReleasesTab(QWidget):
         token_order  = _known_token_order(mask)
         extra_tokens = get_custom_tokens(mask)
         self._releases_view.refresh(token_order, extra_tokens)
+        self._liked_view.refresh()
+        self._playlist_view._refresh_model()
 
     def navigate_to_release(self, folder_path: str) -> None:
         self._search.clear()

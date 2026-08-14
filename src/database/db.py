@@ -611,6 +611,25 @@ class Database:
             )
             return True
 
+    def add_track_to_playlist_again(self, playlist_id: int, path: str, artist: str,
+                                    title: str, album: str, folder_path: str,
+                                    duration_ms: int,
+                                    start_ms: int = 0, end_ms: int = 0) -> None:
+        """Insert a track even if it already exists in the playlist."""
+        with self.conn() as c:
+            pos = c.execute(
+                "SELECT COALESCE(MAX(position) + 1, 0) FROM playlist_tracks WHERE playlist_id = ?",
+                (playlist_id,),
+            ).fetchone()[0]
+            c.execute(
+                """INSERT INTO playlist_tracks
+                   (playlist_id, path, start_ms, end_ms, artist, title, album, folder_path,
+                    duration_ms, date_added, position)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (playlist_id, path, start_ms, end_ms, artist, title, album, folder_path,
+                 duration_ms, datetime.now().isoformat(timespec="seconds"), pos),
+            )
+
     def remove_track_from_playlist(self, playlist_id: int, path: str, start_ms: int = 0) -> None:
         with self.conn() as c:
             c.execute(

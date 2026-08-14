@@ -10,12 +10,28 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QDrag, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QHBoxLayout, QHeaderView,
-    QLabel, QMenu, QPushButton, QStyle, QStyledItemDelegate,
+    QLabel, QMenu, QMessageBox, QPushButton, QStyle, QStyledItemDelegate,
     QStyleOptionViewItem, QTableView, QVBoxLayout, QWidget,
 )
 
 from src.ui.style import ElidedTooltipDelegate, ROW_HEIGHT, TABLE_STYLE
 from src.utils import fmt_ms
+
+def _confirm_add_duplicates(parent, duplicates: list) -> bool:
+    """Ask whether to add already-present tracks again. Returns True if confirmed."""
+    if len(duplicates) == 1:
+        r = duplicates[0] if isinstance(duplicates[0], dict) else {}
+        artist = r.get("artist", "") if isinstance(r, dict) else ""
+        title  = r.get("title",  "") if isinstance(r, dict) else ""
+        label  = f"«{artist} – {title}»" if artist else f"«{title}»"
+        msg = f"{label} is already in this playlist.\n\nAdd it again?"
+    else:
+        msg = f"{len(duplicates)} tracks are already in this playlist.\n\nAdd them again?"
+    return QMessageBox.question(
+        parent, "Already in Playlist", msg,
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+    ) == QMessageBox.StandardButton.Yes
+
 
 COL_NUM    = 0
 COL_ARTIST = 1
@@ -435,12 +451,22 @@ class LikedTracksView(QWidget):
             self._enqueue_selected()
         elif chosen in pl_actions:
             pid = pl_actions[chosen]
+            duplicates = []
             for r in self._selected_rows():
-                self._db.add_track_to_playlist(
+                added = self._db.add_track_to_playlist(
                     pid, r["path"], r.get("artist", ""), r.get("title", ""),
                     r.get("album", ""), r.get("folder_path", ""), r.get("duration_ms", 0),
                     r.get("start_ms", 0), r.get("end_ms", 0),
                 )
+                if not added:
+                    duplicates.append(r)
+            if duplicates and _confirm_add_duplicates(self, duplicates):
+                for r in duplicates:
+                    self._db.add_track_to_playlist_again(
+                        pid, r["path"], r.get("artist", ""), r.get("title", ""),
+                        r.get("album", ""), r.get("folder_path", ""), r.get("duration_ms", 0),
+                        r.get("start_ms", 0), r.get("end_ms", 0),
+                    )
             self.playlist_track_added.emit(pid)
         elif chosen == act_go_release:
             self.go_to_release.emit(row["folder_path"])

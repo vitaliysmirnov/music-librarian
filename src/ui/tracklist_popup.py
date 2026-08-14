@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -29,6 +30,20 @@ _ROW_H = 22
 
 def _trunc(s: str, n: int) -> str:
     return s if len(s) <= n else s[:n - 1] + "…"
+
+
+def _confirm_add_duplicates(parent, duplicates: list) -> bool:
+    """Ask the user whether to add already-present tracks again. Returns True if confirmed."""
+    if len(duplicates) == 1:
+        _, artist, title, *_ = duplicates[0]
+        label = f"«{artist} – {title}»" if artist else f"«{title}»"
+        msg = f"{label} is already in this playlist.\n\nAdd it again?"
+    else:
+        msg = f"{len(duplicates)} tracks are already in this playlist.\n\nAdd them again?"
+    return QMessageBox.question(
+        parent, "Already in Playlist", msg,
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+    ) == QMessageBox.StandardButton.Yes
 
 
 class TracklistPopup(QDialog):
@@ -344,12 +359,21 @@ class TracklistPopup(QDialog):
             self.enqueue_track.emit(paths, rr)
         elif chosen in pl_actions:
             pid = pl_actions[chosen]
+            duplicates = []
             for i in indices:
                 path = self._paths[i]
                 artist, title, ms = self._tracks[i]
                 s_ms, e_ms = self._cue_offsets[i]
-                self._db.add_track_to_playlist(
+                added = self._db.add_track_to_playlist(
                     pid, path, artist, title,
                     self._album, self._folder_path, ms, s_ms, e_ms,
                 )
+                if not added:
+                    duplicates.append((path, artist, title, ms, s_ms, e_ms))
+            if duplicates and _confirm_add_duplicates(self, duplicates):
+                for (path, artist, title, ms, s_ms, e_ms) in duplicates:
+                    self._db.add_track_to_playlist_again(
+                        pid, path, artist, title,
+                        self._album, self._folder_path, ms, s_ms, e_ms,
+                    )
             self.playlist_track_added.emit(pid)

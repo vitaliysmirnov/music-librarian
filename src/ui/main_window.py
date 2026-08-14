@@ -301,16 +301,29 @@ class MainWindow(QMainWindow):
         self._releases_tab.navigate_to(kind, value)
 
     def _on_queue_add_to_playlist(self, track_idx: int, playlist_id: int):
+        from PySide6.QtWidgets import QMessageBox
         queue = self._player_engine.queue
         if not (0 <= track_idx < len(queue)):
             return
         t = queue[track_idx]
         folder_path = (t.row or {}).get("folder_path") or str(Path(t.path).parent)
         album = (t.row or {}).get("title") or ""
-        self._db.add_track_to_playlist(
+        added = self._db.add_track_to_playlist(
             playlist_id, t.path, t.artist, t.title, album, folder_path, t.duration_ms,
             t.start_ms, t.end_ms,
         )
+        if not added:
+            label = f"«{t.artist} – {t.title}»" if t.artist else f"«{t.title}»"
+            msg = f"{label} is already in this playlist.\n\nAdd it again?"
+            reply = QMessageBox.question(
+                self, "Already in Playlist", msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._db.add_track_to_playlist_again(
+                    playlist_id, t.path, t.artist, t.title, album, folder_path, t.duration_ms,
+                    t.start_ms, t.end_ms,
+                )
         self._releases_tab.on_playlist_track_added(playlist_id)
 
     def _on_player_add_to_playlist(
@@ -319,10 +332,23 @@ class MainWindow(QMainWindow):
         album: str, folder_path: str, duration_ms: int,
         start_ms: int = 0, end_ms: int = 0,
     ):
-        self._db.add_track_to_playlist(
+        from PySide6.QtWidgets import QMessageBox
+        added = self._db.add_track_to_playlist(
             playlist_id, path, artist, title, album, folder_path, duration_ms,
             start_ms, end_ms,
         )
+        if not added:
+            label = f"«{artist} – {title}»" if artist else f"«{title}»"
+            msg = f"{label} is already in this playlist.\n\nAdd it again?"
+            reply = QMessageBox.question(
+                self, "Already in Playlist", msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._db.add_track_to_playlist_again(
+                    playlist_id, path, artist, title, album, folder_path, duration_ms,
+                    start_ms, end_ms,
+                )
         self._releases_tab.on_playlist_track_added(playlist_id)
 
     def _on_player_go_to_release(self, folder_path: str):

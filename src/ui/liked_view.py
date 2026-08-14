@@ -335,12 +335,18 @@ class LikedTracksView(QWidget):
 
     # ── Actions ────────────────────────────────────────────────────────────
 
+    def _track_meta_for(self, row: dict) -> dict:
+        return {"start_ms": row.get("start_ms", 0), "end_ms": row.get("end_ms", 0),
+                "artist": row.get("artist", ""), "title": row.get("title", ""),
+                "duration_ms": row.get("duration_ms", 0)}
+
     def _on_double_click(self, proxy_index: QModelIndex):
         row = self._selected_row()
         if row and Path(row["path"]).is_file():
             release_row = {"folder_path": row["folder_path"],
                            "title": row["album"], "artist": row["artist"],
-                           "catalog_number": row.get("catalog_number", "")}
+                           "catalog_number": row.get("catalog_number", ""),
+                           "_track_meta": [self._track_meta_for(row)]}
             self.play_track_requested.emit([row["path"]], release_row)
 
     def _play_selected(self):
@@ -348,7 +354,8 @@ class LikedTracksView(QWidget):
         if row and Path(row["path"]).is_file():
             release_row = {"folder_path": row["folder_path"],
                            "title": row["album"], "artist": row["artist"],
-                           "catalog_number": row.get("catalog_number", "")}
+                           "catalog_number": row.get("catalog_number", ""),
+                           "_track_meta": [self._track_meta_for(row)]}
             self.play_track_requested.emit([row["path"]], release_row)
 
     def _play_all(self):
@@ -356,22 +363,27 @@ class LikedTracksView(QWidget):
         if not rows:
             return
         paths = [r["path"] for r in rows]
-        release_row = {"folder_path": "", "title": "Liked", "artist": "", "catalog_number": "", "_nav_kind": "liked"}
+        track_meta = [self._track_meta_for(r) for r in rows]
+        release_row = {"folder_path": "", "title": "Liked", "artist": "", "catalog_number": "",
+                       "_nav_kind": "liked", "_track_meta": track_meta}
         self.play_track_requested.emit(paths, release_row)
 
     def _enqueue_selected(self):
         rows = self._selected_rows()
-        paths = [r["path"] for r in rows if Path(r["path"]).is_file()]
-        if paths:
-            first = rows[0]
-            release_row = {"folder_path": first["folder_path"],
-                           "title": first["album"], "artist": first["artist"],
-                           "catalog_number": first.get("catalog_number", "")}
-            self.enqueue_track_requested.emit(paths, release_row)
+        live = [r for r in rows if Path(r["path"]).is_file()]
+        if not live:
+            return
+        paths = [r["path"] for r in live]
+        first = live[0]
+        release_row = {"folder_path": first["folder_path"],
+                       "title": first["album"], "artist": first["artist"],
+                       "catalog_number": first.get("catalog_number", ""),
+                       "_track_meta": [self._track_meta_for(r) for r in live]}
+        self.enqueue_track_requested.emit(paths, release_row)
 
     def _unlike_selected(self):
         for row in self._selected_rows():
-            self._db.unlike_track(row["path"])
+            self._db.unlike_track(row["path"], row.get("start_ms", 0))
         self.refresh()
         self.track_unliked.emit()
 
@@ -379,7 +391,7 @@ class LikedTracksView(QWidget):
         src_row = self._proxy.mapToSource(proxy_index).row()
         row = self._model.get_row(src_row)
         if row:
-            self._db.unlike_track(row["path"])
+            self._db.unlike_track(row["path"], row.get("start_ms", 0))
             self.refresh()
             self.track_unliked.emit()
 
@@ -427,6 +439,7 @@ class LikedTracksView(QWidget):
                 self._db.add_track_to_playlist(
                     pid, r["path"], r.get("artist", ""), r.get("title", ""),
                     r.get("album", ""), r.get("folder_path", ""), r.get("duration_ms", 0),
+                    r.get("start_ms", 0), r.get("end_ms", 0),
                 )
             self.playlist_track_added.emit(pid)
         elif chosen == act_go_release:

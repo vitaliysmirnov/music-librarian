@@ -67,13 +67,16 @@ CREATE INDEX IF NOT EXISTS idx_releases_artist  ON releases(artist);
 CREATE INDEX IF NOT EXISTS idx_releases_title   ON releases(title);
 
 CREATE TABLE IF NOT EXISTS liked_tracks (
-    path        TEXT    PRIMARY KEY,
+    path        TEXT    NOT NULL,
+    start_ms    INTEGER NOT NULL DEFAULT 0,
+    end_ms      INTEGER NOT NULL DEFAULT 0,
     artist      TEXT    NOT NULL DEFAULT '',
     title       TEXT    NOT NULL DEFAULT '',
     album       TEXT    NOT NULL DEFAULT '',
     folder_path TEXT    NOT NULL DEFAULT '',
     duration_ms INTEGER NOT NULL DEFAULT 0,
-    date_liked  TEXT    NOT NULL
+    date_liked  TEXT    NOT NULL,
+    PRIMARY KEY (path, start_ms)
 );
 
 CREATE TABLE IF NOT EXISTS playlists (
@@ -86,6 +89,8 @@ CREATE TABLE IF NOT EXISTS playlist_tracks (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     playlist_id INTEGER NOT NULL,
     path        TEXT    NOT NULL,
+    start_ms    INTEGER NOT NULL DEFAULT 0,
+    end_ms      INTEGER NOT NULL DEFAULT 0,
     artist      TEXT    NOT NULL DEFAULT '',
     title       TEXT    NOT NULL DEFAULT '',
     album       TEXT    NOT NULL DEFAULT '',
@@ -210,6 +215,36 @@ class Database:
             if "position" not in pl_cols:
                 c.execute("ALTER TABLE playlists ADD COLUMN position INTEGER NOT NULL DEFAULT 0")
                 c.execute("UPDATE playlists SET position = id")
+
+            lt_cols = [r[1] for r in c.execute("PRAGMA table_info(liked_tracks)").fetchall()]
+            if "start_ms" not in lt_cols:
+                c.execute("""
+                    CREATE TABLE liked_tracks_new (
+                        path        TEXT    NOT NULL,
+                        start_ms    INTEGER NOT NULL DEFAULT 0,
+                        end_ms      INTEGER NOT NULL DEFAULT 0,
+                        artist      TEXT    NOT NULL DEFAULT '',
+                        title       TEXT    NOT NULL DEFAULT '',
+                        album       TEXT    NOT NULL DEFAULT '',
+                        folder_path TEXT    NOT NULL DEFAULT '',
+                        duration_ms INTEGER NOT NULL DEFAULT 0,
+                        date_liked  TEXT    NOT NULL,
+                        PRIMARY KEY (path, start_ms)
+                    )
+                """)
+                c.execute("""
+                    INSERT INTO liked_tracks_new
+                        (path, start_ms, end_ms, artist, title, album, folder_path, duration_ms, date_liked)
+                    SELECT path, 0, 0, artist, title, album, folder_path, duration_ms, date_liked
+                    FROM liked_tracks
+                """)
+                c.execute("DROP TABLE liked_tracks")
+                c.execute("ALTER TABLE liked_tracks_new RENAME TO liked_tracks")
+
+            pt_cols = [r[1] for r in c.execute("PRAGMA table_info(playlist_tracks)").fetchall()]
+            if "start_ms" not in pt_cols:
+                c.execute("ALTER TABLE playlist_tracks ADD COLUMN start_ms INTEGER NOT NULL DEFAULT 0")
+                c.execute("ALTER TABLE playlist_tracks ADD COLUMN end_ms   INTEGER NOT NULL DEFAULT 0")
 
         # Rename cover files from NFD-keyed to NFC-keyed names — runs after the
         # DB transaction commits so a filesystem error here cannot roll it back.
@@ -484,30 +519,31 @@ class Database:
     # ── Liked tracks ──────────────────────────────────────────────────────────
 
     def like_track(self, path: str, artist: str, title: str, album: str,
-                   folder_path: str, duration_ms: int) -> None:
+                   folder_path: str, duration_ms: int,
+                   start_ms: int = 0, end_ms: int = 0) -> None:
         with self.conn() as c:
             c.execute(
                 """INSERT OR REPLACE INTO liked_tracks
-                   (path, artist, title, album, folder_path, duration_ms, date_liked)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (path, artist, title, album, folder_path, duration_ms,
+                   (path, start_ms, end_ms, artist, title, album, folder_path, duration_ms, date_liked)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (path, start_ms, end_ms, artist, title, album, folder_path, duration_ms,
                  datetime.now().isoformat(timespec="seconds")),
             )
 
-    def unlike_track(self, path: str) -> None:
+    def unlike_track(self, path: str, start_ms: int = 0) -> None:
         with self.conn() as c:
-            c.execute("DELETE FROM liked_tracks WHERE path = ?", (path,))
+            c.execute("DELETE FROM liked_tracks WHERE path = ? AND start_ms = ?", (path, start_ms))
 
-    def is_track_liked(self, path: str) -> bool:
+    def is_track_liked(self, path: str, start_ms: int = 0) -> bool:
         with self.conn() as c:
             return c.execute(
-                "SELECT 1 FROM liked_tracks WHERE path = ?", (path,)
+                "SELECT 1 FROM liked_tracks WHERE path = ? AND start_ms = ?", (path, start_ms)
             ).fetchone() is not None
 
     def get_liked_tracks(self) -> list:
         with self.conn() as c:
             return c.execute(
-                """SELECT path, artist, title, album, folder_path, duration_ms, date_liked
+                """SELECT path, start_ms, end_ms, artist, title, album, folder_path, duration_ms, date_liked
                    FROM liked_tracks ORDER BY date_liked DESC"""
             ).fetchall()
 
@@ -553,11 +589,12 @@ class Database:
 
     def add_track_to_playlist(self, playlist_id: int, path: str, artist: str,
                                title: str, album: str, folder_path: str,
-                               duration_ms: int) -> bool:
+                               duration_ms: int,
+                               start_ms: int = 0, end_ms: int = 0) -> bool:
         with self.conn() as c:
             if c.execute(
-                "SELECT 1 FROM playlist_tracks WHERE playlist_id = ? AND path = ?",
-                (playlist_id, path),
+                "SELECT 1 FROM playlist_tracks WHERE playlist_id = ? AND path = ? AND start_ms = ?",
+                (playlist_id, path, start_ms),
             ).fetchone():
                 return False
             pos = c.execute(
@@ -566,33 +603,33 @@ class Database:
             ).fetchone()[0]
             c.execute(
                 """INSERT INTO playlist_tracks
-                   (playlist_id, path, artist, title, album, folder_path,
+                   (playlist_id, path, start_ms, end_ms, artist, title, album, folder_path,
                     duration_ms, date_added, position)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (playlist_id, path, artist, title, album, folder_path,
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (playlist_id, path, start_ms, end_ms, artist, title, album, folder_path,
                  duration_ms, datetime.now().isoformat(timespec="seconds"), pos),
             )
             return True
 
-    def remove_track_from_playlist(self, playlist_id: int, path: str) -> None:
+    def remove_track_from_playlist(self, playlist_id: int, path: str, start_ms: int = 0) -> None:
         with self.conn() as c:
             c.execute(
-                "DELETE FROM playlist_tracks WHERE playlist_id = ? AND path = ?",
-                (playlist_id, path),
+                "DELETE FROM playlist_tracks WHERE playlist_id = ? AND path = ? AND start_ms = ?",
+                (playlist_id, path, start_ms),
             )
 
     def get_playlist_tracks(self, playlist_id: int) -> list:
         with self.conn() as c:
             return c.execute(
-                """SELECT path, artist, title, album, folder_path, duration_ms, date_added
+                """SELECT path, start_ms, end_ms, artist, title, album, folder_path, duration_ms, date_added
                    FROM playlist_tracks WHERE playlist_id = ? ORDER BY position""",
                 (playlist_id,),
             ).fetchall()
 
-    def reorder_playlist_tracks(self, playlist_id: int, ordered_paths: list) -> None:
+    def reorder_playlist_tracks(self, playlist_id: int, ordered_keys: list) -> None:
         with self.conn() as c:
-            for pos, path in enumerate(ordered_paths):
+            for pos, (path, start_ms) in enumerate(ordered_keys):
                 c.execute(
-                    "UPDATE playlist_tracks SET position = ? WHERE playlist_id = ? AND path = ?",
-                    (pos, playlist_id, path),
+                    "UPDATE playlist_tracks SET position = ? WHERE playlist_id = ? AND path = ? AND start_ms = ?",
+                    (pos, playlist_id, path, start_ms),
                 )

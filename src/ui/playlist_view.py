@@ -114,6 +114,9 @@ class PlaylistModel(QAbstractTableModel):
     def paths(self) -> list[str]:
         return [r["path"] for r in self._rows]
 
+    def keys(self) -> list[tuple]:
+        return [(r["path"], r.get("start_ms", 0)) for r in self._rows]
+
     def move_row(self, from_row: int, to_row: int) -> None:
         if from_row == to_row:
             return
@@ -417,7 +420,7 @@ class PlaylistView(QWidget):
     def _refresh_model(self):
         rows = []
         for r in self._db.get_playlist_tracks(self._playlist_id):
-            row = dict(r) | {"is_liked": self._db.is_track_liked(r["path"])}
+            row = dict(r) | {"is_liked": self._db.is_track_liked(r["path"], r["start_ms"])}
             release = self._db.get_release_by_path(row.get("folder_path", ""))
             row["catalog_number"] = (dict(release).get("catalog_number") or "") if release else ""
             rows.append(row)
@@ -449,12 +452,18 @@ class PlaylistView(QWidget):
 
     # ── Actions ───────────────────────────────────────────────────────────
 
+    def _track_meta_for(self, row: dict) -> dict:
+        return {"start_ms": row.get("start_ms", 0), "end_ms": row.get("end_ms", 0),
+                "artist": row.get("artist", ""), "title": row.get("title", ""),
+                "duration_ms": row.get("duration_ms", 0)}
+
     def _on_double_click(self, index: QModelIndex):
         row = self._model.get_row(index.row())
         if row and Path(row["path"]).is_file():
             release_row = {"folder_path": row["folder_path"],
                            "title": row["album"], "artist": row["artist"],
-                           "catalog_number": row.get("catalog_number", "")}
+                           "catalog_number": row.get("catalog_number", ""),
+                           "_track_meta": [self._track_meta_for(row)]}
             self.play_track_requested.emit([row["path"]], release_row)
 
     def _play_selected(self):
@@ -462,60 +471,77 @@ class PlaylistView(QWidget):
         if row and Path(row["path"]).is_file():
             release_row = {"folder_path": row["folder_path"],
                            "title": row["album"], "artist": row["artist"],
-                           "catalog_number": row.get("catalog_number", "")}
+                           "catalog_number": row.get("catalog_number", ""),
+                           "_track_meta": [self._track_meta_for(row)]}
             self.play_track_requested.emit([row["path"]], release_row)
 
     def _play_all(self):
         rows = [r for r in self._model._rows if Path(r["path"]).is_file()]
         if not rows:
             return
+        track_meta = [self._track_meta_for(r) for r in rows]
         release_row = {"folder_path": "", "title": self._name, "artist": "", "catalog_number": "",
-                       "_nav_kind": "playlist", "_nav_id": self._playlist_id}
+                       "_nav_kind": "playlist", "_nav_id": self._playlist_id,
+                       "_track_meta": track_meta}
         self.play_track_requested.emit([r["path"] for r in rows], release_row)
 
     def _enqueue_selected(self):
         rows = self._selected_rows()
-        paths = [r["path"] for r in rows if Path(r["path"]).is_file()]
-        if paths:
-            first = rows[0]
-            release_row = {"folder_path": first["folder_path"],
-                           "title": first["album"], "artist": first["artist"],
-                           "catalog_number": first.get("catalog_number", "")}
-            self.enqueue_track_requested.emit(paths, release_row)
+        live = [r for r in rows if Path(r["path"]).is_file()]
+        if not live:
+            return
+        first = live[0]
+        release_row = {"folder_path": first["folder_path"],
+                       "title": first["album"], "artist": first["artist"],
+                       "catalog_number": first.get("catalog_number", ""),
+                       "_track_meta": [self._track_meta_for(r) for r in live]}
+        self.enqueue_track_requested.emit([r["path"] for r in live], release_row)
 
     def _toggle_like_at(self, model_index: QModelIndex):
         row = self._model.get_row(model_index.row())
         if not row:
             return
         if row.get("is_liked"):
-            self._db.unlike_track(row["path"])
+            self._db.unlike_track(row["path"], row.get("start_ms", 0))
         else:
             self._like_row(row)
         self._refresh_model()
         self.liked_changed.emit()
 
     def _like_row(self, row: dict):
-        from src.ui.player_engine import _read_full_tags
-        artist, title, album, duration_ms = _read_full_tags(row["path"])
-        if not album:
-            album = row.get("album", "")
-        self._db.like_track(
-            row["path"], artist or row.get("artist", ""), title or row.get("title", ""),
-            album, row.get("folder_path", ""), duration_ms or row.get("duration_ms", 0),
-        )
+        s_ms = row.get("start_ms", 0)
+        e_ms = row.get("end_ms", 0)
+        if s_ms:
+            # CUE virtual track — metadata already stored in playlist row
+            self._db.like_track(
+                row["path"], row.get("artist", ""), row.get("title", ""),
+                row.get("album", ""), row.get("folder_path", ""),
+                row.get("duration_ms", 0), s_ms, e_ms,
+            )
+        else:
+            from src.ui.player_engine import _read_full_tags
+            artist, title, album, duration_ms = _read_full_tags(row["path"])
+            if not album:
+                album = row.get("album", "")
+            self._db.like_track(
+                row["path"], artist or row.get("artist", ""), title or row.get("title", ""),
+                album, row.get("folder_path", ""), duration_ms or row.get("duration_ms", 0),
+            )
 
     def _remove_selected(self):
         if self._playlist_id is None:
             return
         for row in self._selected_rows():
-            self._db.remove_track_from_playlist(self._playlist_id, row["path"])
+            self._db.remove_track_from_playlist(
+                self._playlist_id, row["path"], row.get("start_ms", 0)
+            )
         self._refresh_model()
         self.tracks_changed.emit(self._playlist_id)
 
     def _on_row_moved(self, from_row: int, to_row: int):
         self._model.move_row(from_row, to_row)
         if self._playlist_id is not None:
-            self._db.reorder_playlist_tracks(self._playlist_id, self._model.paths())
+            self._db.reorder_playlist_tracks(self._playlist_id, self._model.keys())
 
     def _on_urls_dropped(self, urls: list):
         if self._playlist_id is None:
@@ -560,7 +586,9 @@ class PlaylistView(QWidget):
         if not row:
             return
         available = Path(row["path"]).is_file()
-        is_liked  = self._db is not None and self._db.is_track_liked(row["path"])
+        is_liked  = self._db is not None and self._db.is_track_liked(
+            row["path"], row.get("start_ms", 0)
+        )
         menu = QMenu(self)
         act_play    = menu.addAction("Play Now")
         act_enqueue = menu.addAction("Add to Queue")
@@ -579,7 +607,7 @@ class PlaylistView(QWidget):
             self._enqueue_selected()
         elif chosen == act_like:
             if is_liked:
-                self._db.unlike_track(row["path"])
+                self._db.unlike_track(row["path"], row.get("start_ms", 0))
             else:
                 self._like_row(row)
             self.liked_changed.emit()

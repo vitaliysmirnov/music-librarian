@@ -289,6 +289,23 @@ class PlayerEngine(QObject):
         """Replace queue with given paths and start playback."""
         self._queue.clear()
         self._track_idx = -1
+        track_meta = (release_row or {}).get("_track_meta")
+        if track_meta:
+            clean_row = {k: v for k, v in release_row.items() if k != "_track_meta"}
+            is_library = bool(clean_row)
+            for p, meta in zip(paths, track_meta):
+                self._queue.append(QueueTrack(
+                    row=clean_row, path=p,
+                    artist=meta.get("artist", ""), title=meta.get("title", ""),
+                    duration_ms=meta.get("duration_ms", 0),
+                    is_library=is_library,
+                    start_ms=meta.get("start_ms", 0),
+                    end_ms=meta.get("end_ms", 0),
+                ))
+            self.queue_changed.emit()
+            if self._queue:
+                self._play_at(0)
+            return
         if release_row is None and len(paths) == 1:
             expanded = _cue_entries_for_single_file(paths[0])
             if expanded:
@@ -306,6 +323,23 @@ class PlayerEngine(QObject):
 
     def enqueue_tracks(self, paths: list[str], release_row: dict | None = None):
         """Append specific audio files to the queue; start playback if idle."""
+        track_meta = (release_row or {}).get("_track_meta")
+        if track_meta:
+            clean_row = {k: v for k, v in release_row.items() if k != "_track_meta"}
+            is_library = bool(clean_row)
+            for p, meta in zip(paths, track_meta):
+                self._queue.append(QueueTrack(
+                    row=clean_row, path=p,
+                    artist=meta.get("artist", ""), title=meta.get("title", ""),
+                    duration_ms=meta.get("duration_ms", 0),
+                    is_library=is_library,
+                    start_ms=meta.get("start_ms", 0),
+                    end_ms=meta.get("end_ms", 0),
+                ))
+            self.queue_changed.emit()
+            if self._track_idx < 0 and self._is_stopped():
+                self._play_at(0)
+            return
         if release_row is None and len(paths) == 1:
             expanded = _cue_entries_for_single_file(paths[0])
             if expanded:

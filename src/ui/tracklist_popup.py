@@ -17,8 +17,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.ui.player_engine import _audio_paths, _read_track_tags
+from src.ui.player_engine import _audio_paths, _duration_from_file, _read_track_tags
 from src.utils import fmt_ms as _fmt_ms
+from src.utils.cue import find_cue_for_folder, parse_cue
 
 _MAX_ARTIST = 20
 _MAX_TITLE  = 33
@@ -62,6 +63,25 @@ class TracklistPopup(QDialog):
 
         self._paths  = paths
         self._tracks = [_read_track_tags(p) for p in paths]
+        self._cue_offsets: list[tuple[int, int]] = [(0, 0)] * len(paths)
+        self._is_cue = False
+
+        # Detect single-file CUE album and expand to virtual tracks.
+        if len(paths) == 1:
+            from pathlib import Path as _Path
+            cue_path = find_cue_for_folder(_Path(release_row["folder_path"]))
+            if cue_path:
+                audio_file, album_artist, _album_title, cue_tracks = parse_cue(cue_path)
+                if audio_file and cue_tracks:
+                    total_ms = _duration_from_file(str(audio_file))
+                    self._paths = [str(audio_file)] * len(cue_tracks)
+                    self._tracks = [
+                        (t.artist or album_artist, t.title,
+                         t.end_ms - t.start_ms if t.end_ms else max(0, total_ms - t.start_ms))
+                        for t in cue_tracks
+                    ]
+                    self._cue_offsets = [(t.start_ms, t.end_ms) for t in cue_tracks]
+                    self._is_cue = True
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -125,7 +145,7 @@ class TracklistPopup(QDialog):
         self._like_buttons: list[QPushButton] = []
 
         for i, (path, (track_artist, track_title, ms)) in enumerate(
-            zip(paths, self._tracks), 1
+            zip(self._paths, self._tracks), 1
         ):
             item = QListWidgetItem()
             item.setSizeHint(item.sizeHint().__class__(-1, _ROW_H))
@@ -155,24 +175,26 @@ class TracklistPopup(QDialog):
                 QPushButton:hover   { color: palette(buttonText); }
                 QPushButton:checked:hover { color: #e0405a; }
             """)
-            is_liked = db is not None and db.is_track_liked(path)
+            track_start_ms, track_end_ms = self._cue_offsets[i - 1]
+            is_liked = db is not None and db.is_track_liked(path, track_start_ms)
             like_btn.setText("♥" if is_liked else "♡")
             like_btn.setChecked(is_liked)
             like_btn.setToolTip("Like / Unlike")
 
-            def _make_toggle(p, artist_=track_artist, title_=track_title, btn=like_btn):
+            def _make_toggle(p, idx_=i - 1, artist_=track_artist, title_=track_title,
+                              dur_=ms, btn=like_btn):
                 def _toggle(checked: bool):
                     btn.setText("♥" if checked else "♡")
                     if self._db is None:
                         return
+                    s_ms, e_ms = self._cue_offsets[idx_]
                     if checked:
-                        _, _, dur = _read_track_tags(p)
                         self._db.like_track(
                             p, artist_, title_, self._album,
-                            self._folder_path, dur,
+                            self._folder_path, dur_, s_ms, e_ms,
                         )
                     else:
-                        self._db.unlike_track(p)
+                        self._db.unlike_track(p, s_ms)
                     self.liked_changed.emit()
                 return _toggle
 
@@ -265,22 +287,39 @@ class TracklistPopup(QDialog):
         drag.setMimeData(mime)
         drag.exec(Qt.DropAction.CopyAction)
 
-    def _selected_paths(self) -> list[str]:
+    def _selected_indices(self) -> list[int]:
         return [
-            self._paths[self._lw.row(item)]
+            self._lw.row(item)
             for item in self._lw.selectedItems()
             if 0 <= self._lw.row(item) < len(self._paths)
         ]
 
+    def _selected_paths(self) -> list[str]:
+        return [self._paths[i] for i in self._selected_indices()]
+
+    def _build_release_row(self, indices: list[int]) -> dict:
+        if not self._is_cue:
+            return self._release_row
+        meta = []
+        for i in indices:
+            artist, title, dur = self._tracks[i]
+            s_ms, e_ms = self._cue_offsets[i]
+            meta.append({"start_ms": s_ms, "end_ms": e_ms,
+                         "artist": artist, "title": title, "duration_ms": dur})
+        rr = dict(self._release_row)
+        rr["_track_meta"] = meta
+        return rr
+
     def _on_double_click(self, item: QListWidgetItem):
         idx = self._lw.row(item)
         if 0 <= idx < len(self._paths):
-            self.play_track.emit([self._paths[idx]], self._release_row)
+            self.play_track.emit([self._paths[idx]], self._build_release_row([idx]))
 
     def _on_context_menu(self, pos):
         if self._lw.itemAt(pos) is None:
             return
-        paths = self._selected_paths()
+        indices = self._selected_indices()
+        paths   = [self._paths[i] for i in indices]
         if not paths:
             return
         menu = QMenu(self)
@@ -298,20 +337,19 @@ class TracklistPopup(QDialog):
                     pl_actions[act] = pl["id"]
 
         chosen = menu.exec(self._lw.viewport().mapToGlobal(pos))
+        rr = self._build_release_row(indices)
         if chosen == act_play:
-            self.play_track.emit(paths, self._release_row)
+            self.play_track.emit(paths, rr)
         elif chosen == act_enqueue:
-            self.enqueue_track.emit(paths, self._release_row)
+            self.enqueue_track.emit(paths, rr)
         elif chosen in pl_actions:
             pid = pl_actions[chosen]
-            for path in paths:
-                try:
-                    idx = self._paths.index(path)
-                    artist, title, ms = self._tracks[idx]
-                except (ValueError, IndexError):
-                    continue
+            for i in indices:
+                path = self._paths[i]
+                artist, title, ms = self._tracks[i]
+                s_ms, e_ms = self._cue_offsets[i]
                 self._db.add_track_to_playlist(
                     pid, path, artist, title,
-                    self._album, self._folder_path, ms,
+                    self._album, self._folder_path, ms, s_ms, e_ms,
                 )
             self.playlist_track_added.emit(pid)

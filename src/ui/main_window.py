@@ -238,24 +238,46 @@ class MainWindow(QMainWindow):
         self._releases_tab.refresh_liked()
         path = self._player_bar.current_path()
         if path:
-            self._player_bar.set_liked(self._db.is_track_liked(path))
+            idx = self._player_engine.current_track_idx
+            q   = self._player_engine.queue
+            qt  = q[idx] if 0 <= idx < len(q) else None
+            s_ms = qt.start_ms if qt and qt.path == path else 0
+            self._player_bar.set_liked(self._db.is_track_liked(path, s_ms))
 
     def _on_like_toggled(self, path: str, row: dict, checked: bool):
+        # Get start_ms/end_ms from the current QueueTrack (CUE virtual tracks).
+        idx = self._player_engine.current_track_idx
+        q   = self._player_engine.queue
+        qt  = q[idx] if 0 <= idx < len(q) else None
+        start_ms = qt.start_ms if qt and qt.path == path else 0
+        end_ms   = qt.end_ms   if qt and qt.path == path else 0
+
         if checked:
-            from src.ui.player_engine import _read_full_tags
-            artist, title, album_tag, duration_ms = _read_full_tags(path)
             folder_path = (row.get("folder_path") or str(Path(path).parent))
-            if not album_tag:
-                release = self._db.get_release_by_path(str(Path(path).parent))
-                album_tag = dict(release).get("title", "") if release else ""
-            self._db.like_track(path, artist, title, album_tag, folder_path, duration_ms)
+            if start_ms:
+                # CUE virtual track — use metadata from QueueTrack directly
+                artist = qt.artist if qt else ""
+                title  = qt.title  if qt else ""
+                duration_ms = qt.duration_ms if qt else 0
+                album_tag = (row or {}).get("title", "")
+            else:
+                from src.ui.player_engine import _read_full_tags
+                artist, title, album_tag, duration_ms = _read_full_tags(path)
+                if not album_tag:
+                    release = self._db.get_release_by_path(str(Path(path).parent))
+                    album_tag = dict(release).get("title", "") if release else ""
+            self._db.like_track(path, artist, title, album_tag, folder_path, duration_ms,
+                                start_ms, end_ms)
         else:
-            self._db.unlike_track(path)
+            self._db.unlike_track(path, start_ms)
         self._releases_tab.refresh_liked()
         self._releases_tab.sync_popup_like(path, checked)
 
     def _on_track_changed_liked(self, row: dict, path: str, track_idx: int, total: int):
-        self._player_bar.set_liked(self._db.is_track_liked(path))
+        q = self._player_engine.queue
+        qt = q[track_idx] if 0 <= track_idx < len(q) else None
+        start_ms = qt.start_ms if qt and qt.path == path else 0
+        self._player_bar.set_liked(self._db.is_track_liked(path, start_ms))
         folder_path = (row or {}).get("folder_path", "")
         is_library = bool(folder_path and self._db.get_release_by_path(folder_path))
         self._player_bar.set_is_library_track(is_library)
@@ -287,6 +309,7 @@ class MainWindow(QMainWindow):
         album = (t.row or {}).get("title") or ""
         self._db.add_track_to_playlist(
             playlist_id, t.path, t.artist, t.title, album, folder_path, t.duration_ms,
+            t.start_ms, t.end_ms,
         )
         self._releases_tab.on_playlist_track_added(playlist_id)
 
@@ -294,9 +317,11 @@ class MainWindow(QMainWindow):
         self,
         playlist_id: int, path: str, artist: str, title: str,
         album: str, folder_path: str, duration_ms: int,
+        start_ms: int = 0, end_ms: int = 0,
     ):
         self._db.add_track_to_playlist(
             playlist_id, path, artist, title, album, folder_path, duration_ms,
+            start_ms, end_ms,
         )
         self._releases_tab.on_playlist_track_added(playlist_id)
 

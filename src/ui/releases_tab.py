@@ -99,7 +99,9 @@ def _audio_files(folder_path: str) -> list[Path]:
         return []
     return sorted(
         f for f in folder.iterdir()
-        if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
+        if f.is_file()
+        and not f.name.startswith("._")
+        and f.suffix.lower() in AUDIO_EXTENSIONS
     )
 
 

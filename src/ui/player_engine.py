@@ -24,7 +24,9 @@ def _audio_paths(folder_path: str) -> list[str]:
         return []
     return sorted(
         str(f) for f in folder.iterdir()
-        if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
+        if f.is_file()
+        and not f.name.startswith("._")
+        and f.suffix.lower() in AUDIO_EXTENSIONS
     )
 
 

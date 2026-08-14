@@ -68,7 +68,8 @@ def _disc_subdirs(entry: Path) -> list[Path]:
     except PermissionError:
         return []
     has_audio = any(
-        f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS for f in items
+        f.is_file() and not f.name.startswith("._") and f.suffix.lower() in AUDIO_EXTENSIONS
+        for f in items
     )
     if has_audio:
         return []

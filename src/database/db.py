@@ -103,6 +103,19 @@ CREATE INDEX IF NOT EXISTS idx_playlist_tracks_pid ON playlist_tracks(playlist_i
 """
 
 
+def _find_moved_path(c, basename: str, album_title: str) -> tuple[str | None, str | None]:
+    """Return (new_file_path, new_folder_path) for a track that may have moved.
+
+    Searches all releases whose title matches album_title for a file named
+    basename. Returns (None, None) when no candidate is found on disk.
+    """
+    for rel in c.execute("SELECT folder_path FROM releases WHERE title=?", (album_title,)):
+        candidate = Path(rel["folder_path"]) / basename
+        if candidate.is_file():
+            return str(candidate), rel["folder_path"]
+    return None, None
+
+
 class Database:
     def __init__(self, db_path: Path):
         self._path = str(db_path)
@@ -413,14 +426,14 @@ class Database:
                 )
         return True
 
-    def delete_release_by_path(self, folder_path: str):
+    def delete_release_by_path(self, folder_path: str, cascade: bool = True):
         with self.conn() as c:
             # Collect every folder_path being removed (parent + disc children).
             rows = c.execute(
                 "SELECT folder_path FROM releases WHERE folder_path=? OR parent_path=?",
                 (folder_path, folder_path),
             ).fetchall()
-            if rows:
+            if rows and cascade:
                 paths = [r[0] for r in rows]
                 ph = ",".join("?" * len(paths))
                 c.execute(f"DELETE FROM liked_tracks WHERE folder_path IN ({ph})", paths)
@@ -431,6 +444,71 @@ class Database:
             )
             if cur.rowcount:
                 log.debug("delete_release_by_path: deleted %d row(s) for %r", cur.rowcount, folder_path)
+
+    def relink_orphaned_tracks(self) -> int:
+        """Try to re-link orphaned liked/playlist tracks to a release at a new path.
+
+        Matches by album title (releases.title == track.album) and file basename.
+        Returns the number of re-linked track entries.
+        """
+        import sqlite3 as _sqlite3
+        relinked = 0
+        with self.conn() as c:
+            # ── liked_tracks ──────────────────────────────────────
+            rows = c.execute(
+                "SELECT path, start_ms, album FROM liked_tracks"
+                " WHERE folder_path NOT IN (SELECT folder_path FROM releases)"
+            ).fetchall()
+            cache: dict = {}
+            for row in rows:
+                old_path = row["path"]
+                if old_path not in cache:
+                    cache[old_path] = _find_moved_path(
+                        c, Path(old_path).name, row["album"]
+                    )
+                new_path, new_folder = cache[old_path]
+                if not new_path:
+                    continue
+                try:
+                    c.execute(
+                        "UPDATE liked_tracks SET path=?, folder_path=?"
+                        " WHERE path=? AND start_ms=?",
+                        (new_path, new_folder, old_path, row["start_ms"]),
+                    )
+                    relinked += 1
+                    log.info("Relinked liked track: %r → %r", old_path, new_path)
+                except _sqlite3.IntegrityError:
+                    # Already liked at the new location — drop the stale entry.
+                    c.execute(
+                        "DELETE FROM liked_tracks WHERE path=? AND start_ms=?",
+                        (old_path, row["start_ms"]),
+                    )
+
+            # ── playlist_tracks ────────────────────────────────────
+            rows = c.execute(
+                "SELECT id, path, album FROM playlist_tracks"
+                " WHERE folder_path NOT IN (SELECT folder_path FROM releases)"
+            ).fetchall()
+            cache = {}
+            for row in rows:
+                old_path = row["path"]
+                if old_path not in cache:
+                    cache[old_path] = _find_moved_path(
+                        c, Path(old_path).name, row["album"]
+                    )
+                new_path, new_folder = cache[old_path]
+                if not new_path:
+                    continue
+                c.execute(
+                    "UPDATE playlist_tracks SET path=?, folder_path=? WHERE id=?",
+                    (new_path, new_folder, row["id"]),
+                )
+                relinked += 1
+                log.info("Relinked playlist track: %r → %r", old_path, new_path)
+
+        if relinked:
+            log.info("relink_orphaned_tracks: re-linked %d entry(s)", relinked)
+        return relinked
 
     def cleanup_orphaned_tracks(self):
         """Remove liked/playlist tracks whose release no longer exists in the DB."""

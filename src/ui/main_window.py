@@ -628,7 +628,7 @@ class MainWindow(QMainWindow):
                 self._db.update_source_availability(source["id"], False)
                 for path in self._db.get_release_paths_for_source(source["id"]):
                     if not Path(path).exists():
-                        self._db.delete_release_by_path(path)
+                        self._db.delete_release_by_path(path, cascade=False)
                         log.info("Removed release (source deleted): %s", path)
                     else:
                         self._db.set_release_availability(path, False)
@@ -705,6 +705,7 @@ class MainWindow(QMainWindow):
         self._refresh_all()
 
     def _refresh_all(self):
+        self._db.relink_orphaned_tracks()
         self._db.cleanup_orphaned_tracks()
         self._releases_tab.refresh()
         self._sources_tab.refresh()

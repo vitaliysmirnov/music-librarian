@@ -92,7 +92,7 @@ def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, in
             removed = 0
             for path in db.get_release_paths_for_source(source_id):
                 if not Path(_norm(path)).exists():
-                    db.delete_release_by_path(path)
+                    db.delete_release_by_path(path, cascade=False)
                     log.info("Removed release (source deleted): %s", path)
                     removed += 1
                 else:
@@ -175,7 +175,7 @@ def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, in
         except OSError:
             pass
         if not truly_exists:
-            db.delete_release_by_path(path)
+            db.delete_release_by_path(path, cascade=False)
             log.info("Removed release (folder gone): %s", path)
             removed += 1
         else:

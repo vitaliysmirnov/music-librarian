@@ -271,7 +271,6 @@ class MainWindow(QMainWindow):
         else:
             self._db.unlike_track(path, start_ms)
         self._releases_tab.refresh_liked()
-        self._releases_tab.sync_popup_like(path, checked)
 
     def _on_track_changed_liked(self, row: dict, path: str, track_idx: int, total: int):
         q = self._player_engine.queue

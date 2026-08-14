@@ -254,6 +254,19 @@ class TracklistPopup(QDialog):
         btn.setText("♥" if liked else "♡")
         btn.blockSignals(False)
 
+    def refresh_likes(self) -> None:
+        """Re-read liked state from DB for every track and update buttons."""
+        if self._db is None:
+            return
+        for idx, btn in enumerate(self._like_buttons):
+            path = self._paths[idx]
+            start_ms = self._cue_offsets[idx][0]
+            liked = self._db.is_track_liked(path, start_ms)
+            btn.blockSignals(True)
+            btn.setChecked(liked)
+            btn.setText("♥" if liked else "♡")
+            btn.blockSignals(False)
+
     def eventFilter(self, obj, event):
         if obj is self._lw.viewport():
             t = event.type()

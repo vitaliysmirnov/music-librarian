@@ -715,6 +715,10 @@ class _ReleasesView(QWidget):
         if self._tracklist_popup is not None:
             self._tracklist_popup.sync_like(path, liked)
 
+    def refresh_popup_likes(self) -> None:
+        if self._tracklist_popup is not None:
+            self._tracklist_popup.refresh_likes()
+
     def clear_selection(self) -> None:
         self._table.selectionModel().clearSelection()
 
@@ -1224,6 +1228,8 @@ class ReleasesTab(QWidget):
 
     def _on_liked_changed(self):
         self._liked_view.refresh()
+        self._playlist_view._refresh_model()
+        self._releases_view.refresh_popup_likes()
         self.liked_changed.emit()
 
     def _on_popup_playlist_track_added(self, playlist_id: int):
@@ -1342,6 +1348,8 @@ class ReleasesTab(QWidget):
 
     def refresh_liked(self):
         self._liked_view.refresh()
+        self._playlist_view._refresh_model()
+        self._releases_view.refresh_popup_likes()
 
     def sync_popup_like(self, path: str, liked: bool) -> None:
         self._releases_view.sync_popup_like(path, liked)

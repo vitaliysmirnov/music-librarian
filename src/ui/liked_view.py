@@ -84,8 +84,11 @@ class LikedTracksModel(QAbstractTableModel):
         if role == Qt.UserRole:
             return row
         if role == Qt.ForegroundRole:
-            if not row.get("is_available", True):
+            avail = row.get("availability", "ok")
+            if avail == "missing":
                 return QColor("#e05060")
+            if avail == "offline":
+                return QColor("#888888")
             return None
         return None
 
@@ -381,9 +384,14 @@ class LikedTracksView(QWidget):
         rows = []
         for r in self._db.get_liked_tracks():
             row = dict(r) | {"is_liked": True}
-            row["is_available"] = Path(row["path"]).is_file()
             release = self._db.get_release_by_path(row.get("folder_path", ""))
             row["catalog_number"] = (dict(release).get("catalog_number") or "") if release else ""
+            if Path(row["path"]).is_file():
+                row["availability"] = "ok"
+            elif release and not dict(release).get("is_available", True):
+                row["availability"] = "offline"
+            else:
+                row["availability"] = "missing"
             rows.append(row)
         self._model.load(rows)
         n = len(rows)
@@ -428,18 +436,32 @@ class LikedTracksView(QWidget):
                 "artist": row.get("artist", ""), "title": row.get("title", ""),
                 "duration_ms": row.get("duration_ms", 0)}
 
+    def _unavailable_dialog(self, row: dict):
+        """Show an appropriate dialog when a track can't be played."""
+        folder = row.get("folder_path", "")
+        release = self._db.get_release_by_path(folder) if folder else None
+        if release and not dict(release).get("is_available", True):
+            QMessageBox.information(
+                self, "Source Disconnected",
+                "This track's source drive is currently disconnected.\n"
+                "Reconnect it to play.",
+            )
+        else:
+            QMessageBox.information(
+                self, "Track Not Found",
+                "This track could not be found on disk.\n"
+                "It may have been deleted.",
+            )
+
     def _on_double_click(self, proxy_index: QModelIndex):
         row = self._selected_row()
         if not row:
             return
         actual = Path(row["path"]).is_file()
-        if actual != row.get("is_available", True):
+        if actual != (row.get("availability", "ok") == "ok"):
             self.refresh()
         if not actual:
-            QMessageBox.information(
-                self, "Track Not Found",
-                "This track could not be found on disk.\nIt may have been deleted.",
-            )
+            self._unavailable_dialog(row)
             return
         release_row = {"folder_path": row["folder_path"],
                        "title": row["album"], "artist": row["artist"],
@@ -452,13 +474,10 @@ class LikedTracksView(QWidget):
         if not row:
             return
         actual = Path(row["path"]).is_file()
-        if actual != row.get("is_available", True):
+        if actual != (row.get("availability", "ok") == "ok"):
             self.refresh()
         if not actual:
-            QMessageBox.information(
-                self, "Track Not Found",
-                "This track could not be found on disk.\nIt may have been deleted.",
-            )
+            self._unavailable_dialog(row)
             return
         release_row = {"folder_path": row["folder_path"],
                        "title": row["album"], "artist": row["artist"],
@@ -467,7 +486,7 @@ class LikedTracksView(QWidget):
         self.play_track_requested.emit([row["path"]], release_row)
 
     def _play_all(self):
-        if any(Path(r["path"]).is_file() != r.get("is_available", True)
+        if any(Path(r["path"]).is_file() != (r.get("availability", "ok") == "ok")
                for r in self._all_rows_in_order()):
             self.refresh()
         rows = [r for r in self._all_rows_in_order() if Path(r["path"]).is_file()]
@@ -518,10 +537,10 @@ class LikedTracksView(QWidget):
         row = self._selected_row()
         if not row:
             return
-        available = Path(row["path"]).is_file()
+        avail = row.get("availability", "ok")
         menu = QMenu(self)
 
-        if not available:
+        if avail == "missing":
             act_unlike = menu.addAction("Remove from Liked")
             chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
             if chosen == act_unlike:
@@ -530,6 +549,9 @@ class LikedTracksView(QWidget):
 
         act_play       = menu.addAction("Play Now")
         act_enqueue    = menu.addAction("Add to Queue")
+        if avail == "offline":
+            act_play.setEnabled(False)
+            act_enqueue.setEnabled(False)
 
         pl_actions: dict = {}
         playlists = self._db.get_playlists() if self._db is not None else []

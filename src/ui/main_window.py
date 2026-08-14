@@ -290,10 +290,27 @@ class MainWindow(QMainWindow):
 
     def _on_track_not_found(self, artist: str, title: str):
         label = f"«{artist} – {title}»" if artist else f"«{title}»"
-        QMessageBox.information(
-            self, "Track Not Found",
-            f"{label}\n\nThis track could not be found on disk.\nIt may have been deleted.",
-        )
+        idx = self._player_engine.current_track_idx
+        q   = self._player_engine.queue
+        qt  = q[idx] if 0 <= idx < len(q) else None
+        is_offline = False
+        if qt:
+            folder = (qt.row or {}).get("folder_path") or str(Path(qt.path).parent)
+            rel = self._db.get_release_by_path(folder)
+            if rel and not dict(rel).get("is_available", True):
+                is_offline = True
+        if is_offline:
+            QMessageBox.information(
+                self, "Source Disconnected",
+                f"{label}\n\nThis track's source drive is currently disconnected.\n"
+                "Reconnect it to play.",
+            )
+        else:
+            QMessageBox.information(
+                self, "Track Not Found",
+                f"{label}\n\nThis track could not be found on disk.\n"
+                "It may have been deleted.",
+            )
 
     def _update_tray_tooltip(self, text: str):
         if sys.platform == "darwin":

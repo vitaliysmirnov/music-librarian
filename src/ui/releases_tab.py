@@ -1,6 +1,7 @@
 import json
 import platform
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel,
     QPushButton, QTableView, QHeaderView, QAbstractItemView, QMenu,
     QApplication, QStyledItemDelegate, QStyleOptionViewItem, QStyle, QMessageBox,
-    QInputDialog, QSplitter, QStackedWidget,
+    QInputDialog, QSplitter, QStackedWidget, QFileDialog,
 )
 
 from src.scanner.mask import DEFAULT_MASK, KNOWN_TOKENS, get_custom_tokens
@@ -550,6 +551,7 @@ class _ReleasesView(QWidget):
     play_track_requested      = Signal(list, dict)
     enqueue_track_requested   = Signal(list, dict)
     release_trashed           = Signal()
+    release_moved             = Signal(str)  # dest_dir chosen by the user
     column_visibility_changed = Signal(int, bool)  # logical_idx, hidden
     liked_changed             = Signal()
     playlist_track_added      = Signal(int)  # playlist_id
@@ -807,6 +809,13 @@ class _ReleasesView(QWidget):
         act_tracklist = menu.addAction("Tracklist")
         act_tracklist.setEnabled(available)
 
+        is_disc_child = bool(row.get("_is_disc_child"))
+        menu.addSeparator()
+        act_move = menu.addAction("Move Release…")
+        act_move.setEnabled(available and not is_disc_child)
+        act_move_artist = menu.addAction("Move Artist's Releases…")
+        act_move_artist.setEnabled(available and not is_disc_child)
+
         menu.addSeparator()
         act_delete = menu.addAction("Move to Trash")
 
@@ -829,6 +838,10 @@ class _ReleasesView(QWidget):
             self._edit_release()
         elif chosen == act_tracklist:
             self._show_tracklist()
+        elif chosen == act_move:
+            self._move_release()
+        elif chosen == act_move_artist:
+            self._move_artist_releases()
         elif chosen == act_delete:
             self._trash_release()
 
@@ -1059,6 +1072,121 @@ class _ReleasesView(QWidget):
         self.refresh()
         self.release_trashed.emit()
 
+    def _move_release(self):
+        row = self._selected_row()
+        if not row or row.get("_is_disc_child"):
+            return
+
+        folder_path = row["folder_path"]
+        dest_dir = QFileDialog.getExistingDirectory(
+            self, "Move Release To…", str(Path(folder_path).parent)
+        )
+        if not dest_dir:
+            return
+
+        folder_name = Path(folder_path).name
+        new_folder = str(Path(dest_dir) / folder_name)
+        if Path(new_folder) == Path(folder_path):
+            return
+
+        if Path(new_folder).exists():
+            QMessageBox.warning(self, "Move Release",
+                f"'{folder_name}' already exists at the destination.")
+            return
+
+        try:
+            shutil.move(folder_path, new_folder)
+        except Exception as e:
+            QMessageBox.warning(self, "Move Release", f"Could not move:\n{e}")
+            return
+
+        self._db.move_release_path(folder_path, new_folder)
+        self.release_moved.emit(dest_dir)
+        self.refresh()
+
+    def _move_artist_releases(self):
+        row = self._selected_row()
+        if not row:
+            return
+
+        artist = row.get("artist", "")
+        if not artist:
+            return
+
+        releases = [dict(r) for r in self._db.get_releases_by_artist(artist)]
+        if not releases:
+            return
+
+        parents = {str(Path(r["folder_path"]).parent) for r in releases}
+
+        if len(parents) == 1:
+            # All releases share one directory → move the whole artist directory.
+            artist_dir = next(iter(parents))
+            dest_parent = QFileDialog.getExistingDirectory(
+                self, f"Move {artist}'s Releases To…",
+                str(Path(artist_dir).parent),
+            )
+            if not dest_parent:
+                return
+
+            artist_dir_name = Path(artist_dir).name
+            new_artist_dir = str(Path(dest_parent) / artist_dir_name)
+            if Path(new_artist_dir) == Path(artist_dir):
+                return
+
+            if Path(new_artist_dir).exists():
+                QMessageBox.warning(self, "Move Artist's Releases",
+                    f"'{artist_dir_name}' already exists at the destination.")
+                return
+
+            try:
+                shutil.move(artist_dir, new_artist_dir)
+            except Exception as e:
+                QMessageBox.warning(self, "Move Artist's Releases",
+                    f"Could not move:\n{e}")
+                return
+
+            for rel in releases:
+                old = rel["folder_path"]
+                new = str(Path(new_artist_dir) / Path(old).name)
+                self._db.move_release_path(old, new)
+
+            self.release_moved.emit(dest_parent)
+            self.refresh()
+        else:
+            # Releases spread across multiple directories → move each folder
+            # individually into dest_parent/artist/.
+            dest_parent = QFileDialog.getExistingDirectory(
+                self, f"Move {artist}'s Releases To…",
+            )
+            if not dest_parent:
+                return
+
+            artist_dest = Path(dest_parent) / artist
+            errors: list[str] = []
+            moved_any = False
+
+            for rel in releases:
+                old = rel["folder_path"]
+                new = str(artist_dest / Path(old).name)
+                if Path(new).exists():
+                    errors.append(f"'{Path(old).name}' already exists, skipped.")
+                    continue
+                try:
+                    artist_dest.mkdir(parents=True, exist_ok=True)
+                    shutil.move(old, new)
+                    self._db.move_release_path(old, new)
+                    moved_any = True
+                except Exception as e:
+                    errors.append(f"'{Path(old).name}': {e}")
+
+            if errors:
+                QMessageBox.warning(self, "Move Artist's Releases",
+                    "Some releases could not be moved:\n" + "\n".join(errors))
+            if moved_any:
+                self.release_moved.emit(dest_parent)
+                self.refresh()
+
     # ── Data ──────────────────────────────────────────────────────────────────
 
     def refresh(self, token_order: list | None = None, extra_tokens: list | None = None):
@@ -1109,6 +1237,7 @@ class _ReleasesView(QWidget):
 
 class ReleasesTab(QWidget):
     release_trashed         = Signal()
+    release_moved           = Signal(str)  # dest_dir chosen by the user
     play_requested          = Signal(dict)
     enqueue_requested       = Signal(dict)
     play_track_requested    = Signal(list, dict)
@@ -1183,6 +1312,7 @@ class ReleasesTab(QWidget):
         self._releases_view.play_track_requested.connect(self.play_track_requested)
         self._releases_view.enqueue_track_requested.connect(self.enqueue_track_requested)
         self._releases_view.release_trashed.connect(self.release_trashed)
+        self._releases_view.release_moved.connect(self.release_moved)
         self._releases_view.liked_changed.connect(self._on_liked_changed)
         self._releases_view.playlist_track_added.connect(self._on_popup_playlist_track_added)
 

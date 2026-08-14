@@ -197,6 +197,7 @@ class MainWindow(QMainWindow):
         self._tabs.currentChanged.connect(self._on_tab_changed)
         self._releases_tab.release_trashed.connect(self._update_info_label)
         self._releases_tab.release_trashed.connect(self._releases_tab.refresh_liked)
+        self._releases_tab.release_moved.connect(self._on_release_moved)
         self._releases_tab.play_requested.connect(self._player_engine.play_release)
         self._releases_tab.enqueue_requested.connect(self._player_engine.enqueue_release)
         self._releases_tab.play_track_requested.connect(self._player_engine.play_tracks)
@@ -657,6 +658,32 @@ class MainWindow(QMainWindow):
             names = ", ".join(Path(s["path"]).name for s in newly_available)
             self._status_label.setText(f"Drive connected, library updated: {names}")
             self._tray.showMessage("Music Librarian", f"Drive connected: {names}", QSystemTrayIcon.Information, 4000)
+
+    # ── Release move ──────────────────────────────────────────────────────
+
+    def _on_release_moved(self, dest_dir: str):
+        """After a release folder was physically moved, ensure the destination
+        is covered by a source, scan as needed, and refresh the UI."""
+        dest = Path(dest_dir)
+        matched_source = None
+        for src in self._db.get_sources():
+            try:
+                dest.relative_to(src["path"])
+                matched_source = src
+                break
+            except ValueError:
+                continue
+
+        if matched_source:
+            scan_source(self._db, matched_source["id"], matched_source["path"])
+        else:
+            src_id = self._db.add_source(dest_dir)
+            scan_source(self._db, src_id, dest_dir)
+
+        self._sources_tab.refresh()
+        if self._watcher:
+            self._watcher.refresh_watches()
+        self._refresh_all()
 
     # ── Scan ──────────────────────────────────────────────────────────────
 

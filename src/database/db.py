@@ -510,6 +510,57 @@ class Database:
             log.info("relink_orphaned_tracks: re-linked %d entry(s)", relinked)
         return relinked
 
+    def move_release_path(self, old_folder: str, new_folder: str):
+        """Update the DB after a release folder has been physically moved on disk.
+
+        Updates folder_path / last_seen_path in releases, and path / folder_path
+        in liked_tracks and playlist_tracks using a safe prefix replacement so
+        that file paths like /old/Artist/song.flac become /new/Artist/song.flac
+        even when the folder name appears again inside the path.
+        """
+        with self.conn() as c:
+            # ── Disc children (if multi-disc parent) ─────────────────────────
+            for child in c.execute(
+                "SELECT folder_path FROM releases WHERE parent_path=?", (old_folder,)
+            ).fetchall():
+                old_child = child["folder_path"]
+                new_child = str(Path(new_folder) / Path(old_child).name)
+                c.execute(
+                    "UPDATE releases SET folder_path=?, last_seen_path=?, parent_path=?"
+                    " WHERE folder_path=?",
+                    (new_child, new_child, new_folder, old_child),
+                )
+                for tbl in ("liked_tracks", "playlist_tracks"):
+                    c.execute(
+                        f"UPDATE {tbl} SET folder_path=?,"
+                        f" path=? || SUBSTR(path, LENGTH(?)+1)"
+                        f" WHERE folder_path=?",
+                        (new_child, new_child, old_child, old_child),
+                    )
+
+            # ── Parent / single release ───────────────────────────────────────
+            c.execute(
+                "UPDATE releases SET folder_path=?, last_seen_path=? WHERE folder_path=?",
+                (new_folder, new_folder, old_folder),
+            )
+            for tbl in ("liked_tracks", "playlist_tracks"):
+                c.execute(
+                    f"UPDATE {tbl} SET folder_path=?,"
+                    f" path=? || SUBSTR(path, LENGTH(?)+1)"
+                    f" WHERE folder_path=?",
+                    (new_folder, new_folder, old_folder, old_folder),
+                )
+        log.info("move_release_path: %r → %r", old_folder, new_folder)
+
+    def get_releases_by_artist(self, artist: str) -> list:
+        """Return all top-level releases for a given artist (unfiltered)."""
+        with self.conn() as c:
+            return c.execute(
+                "SELECT * FROM releases WHERE artist=? AND parent_path IS NULL"
+                " ORDER BY year_recorded, title",
+                (artist,),
+            ).fetchall()
+
     def cleanup_orphaned_tracks(self):
         """Remove liked/playlist tracks whose release no longer exists in the DB."""
         with self.conn() as c:

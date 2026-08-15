@@ -1054,6 +1054,8 @@ class _ReleasesView(QWidget):
         row = self._selected_row()
         if not row:
             return
+        if not row.get("is_available", True):
+            return
         if row.get("_is_disc_child"):
             QMessageBox.information(
                 self, "Move to Trash",

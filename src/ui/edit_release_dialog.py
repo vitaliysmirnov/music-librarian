@@ -197,7 +197,7 @@ class EditReleaseDialog(QDialog):
         existing_own = _covers.load_cover_for_widget(self._db.covers_dir, self._cover_key, 600)
         if existing_own:
             self._cover.set_pixmap(existing_own)
-        self._cover.set_browse_root(self._release.get("source_path") or "")
+        self._cover.set_browse_root(self._release.get("folder_path") or "")
 
         cover_col = QVBoxLayout()
         cover_col.setSpacing(4)

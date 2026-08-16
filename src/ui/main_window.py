@@ -3,11 +3,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QEvent, QObject, Signal, QRectF, QPointF
+from PySide6.QtCore import Qt, QTimer, QEvent, QObject, Signal, QRectF, QPointF, QThread
 from PySide6.QtGui import QIcon, QAction, QKeySequence, QPixmap, QPainter, QColor, QPen, QBrush
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar, QVBoxLayout,
-    QLabel, QPushButton, QWidget,
+    QLabel, QPushButton, QWidget, QProgressBar,
     QSystemTrayIcon, QMenu, QApplication, QMessageBox,
 )
 
@@ -28,6 +28,27 @@ from src.watcher.watcher import LibraryWatcher
 log = get_logger()
 
 _DRIVE_POLL_INTERVAL_MS = 20_000
+
+
+class _ScanWorker(QObject):
+    """Runs scan_all on a background thread; emits progress and finished signals."""
+    progress = Signal(str, int, int)   # release_name, done, total
+    finished = Signal(int, int, int)   # added, updated, removed
+
+    def __init__(self, db: "Database"):
+        super().__init__()
+        self._db = db
+
+    def run(self) -> None:
+        try:
+            a, u, r = scan_all(self._db, progress_cb=self._on_progress)
+        except Exception:
+            log.exception("Background scan failed")
+            a = u = r = 0
+        self.finished.emit(a, u, r)
+
+    def _on_progress(self, name: str, done: int, total: int) -> None:
+        self.progress.emit(name, done, total)
 
 
 def _set_tray_tooltip(text: str) -> None:
@@ -111,6 +132,8 @@ class MainWindow(QMainWindow):
         self._qt_log_handler = qt_log_handler
         self._data_dir = data_dir
         self._watcher: LibraryWatcher | None = None
+        self._scan_thread: QThread | None = None
+        self._scan_worker: _ScanWorker | None = None
 
         self._fs_signal = _FsChangeSignal()
         self._fs_signal.triggered.connect(self._on_fs_change)
@@ -229,12 +252,19 @@ class MainWindow(QMainWindow):
         self._status_label = QLabel("")
         sb.addWidget(self._status_label)
 
+        self._scan_progress = QProgressBar()
+        self._scan_progress.setFixedWidth(160)
+        self._scan_progress.setFixedHeight(14)
+        self._scan_progress.setTextVisible(False)
+        self._scan_progress.setVisible(False)
+        sb.addWidget(self._scan_progress)
+
         self._info_label = QLabel("")
         sb.addPermanentWidget(self._info_label)
 
-        scan_btn = QPushButton("Scan Now")
-        scan_btn.clicked.connect(self._manual_scan)
-        sb.addPermanentWidget(scan_btn)
+        self._scan_btn = QPushButton("Scan Now")
+        self._scan_btn.clicked.connect(self._manual_scan)
+        sb.addPermanentWidget(self._scan_btn)
 
         self._refresh_all()
 
@@ -729,13 +759,50 @@ class MainWindow(QMainWindow):
     # ── Scan ──────────────────────────────────────────────────────────────
 
     def _manual_scan(self):
+        if self._scan_thread and self._scan_thread.isRunning():
+            return
+        log.info("Scan started")
+        self._scan_btn.setEnabled(False)
         self._status_label.setText("Scanning…")
-        a, u, r = scan_all(self._db)
-        self._refresh_all()
+        self._scan_progress.setValue(0)
+        self._scan_progress.setMaximum(1)
+        self._scan_progress.setVisible(True)
+
+        worker = _ScanWorker(self._db)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_scan_progress)
+        worker.finished.connect(self._on_scan_finished)
+        worker.finished.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_scan_thread_done)
+        self._scan_thread = thread
+        self._scan_worker = worker
+        thread.start()
+
+    def _on_scan_progress(self, name: str, done: int, total: int) -> None:
+        if total > 0:
+            self._scan_progress.setMaximum(total)
+            self._scan_progress.setValue(done)
+        self._status_label.setText(f"Scanning — {done}/{total}  {name}")
+
+    def _on_scan_finished(self, added: int, updated: int, removed: int) -> None:
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        self._status_label.setText(f"Scan {now} — added: {a}, updated: {u}, removed: {r}")
+        self._scan_progress.setVisible(False)
+        self._scan_btn.setEnabled(True)
+        self._refresh_all()
+        self._status_label.setText(
+            f"Scan {now} — added: {added}, updated: {updated}, removed: {removed}"
+        )
         if self._watcher:
             self._watcher.refresh_watches()
+        log.info("Scan finished: +%d updated=%d removed=%d", added, updated, removed)
+
+    def _on_scan_thread_done(self) -> None:
+        self._scan_thread = None
+        self._scan_worker = None
 
     def _auto_scan(self):
         log.info("Auto-scan triggered")

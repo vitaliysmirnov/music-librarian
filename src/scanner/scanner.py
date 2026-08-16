@@ -1,5 +1,6 @@
 import re
 import unicodedata
+from collections.abc import Callable
 from pathlib import Path
 
 from src.database.db import Database
@@ -140,7 +141,17 @@ def _scan_folder_tracks(folder_path: str) -> list[dict]:
     return result
 
 
-def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, int, int]:
+ProgressCb = Callable[[str, int, int], None]  # (release_name, done, total)
+
+
+def scan_source(
+    db: Database,
+    source_id: int,
+    source_path: str,
+    progress_cb: ProgressCb | None = None,
+    _done_offset: int = 0,
+    _global_total: int = 0,
+) -> tuple[int, int, int]:
     """Scan one source directory. Returns (added, updated, removed) counts."""
     root = Path(source_path)
     if not root.exists():
@@ -168,14 +179,21 @@ def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, in
     db.update_source_availability(source_id, True)
     pattern = _load_pattern(db)
 
+    # Collect entries upfront so we know the total for progress reporting.
+    entries = list(_iter_release_dirs(root, pattern))
+    local_total = len(entries)
+    total = _global_total if _global_total else local_total
+
     # Normalise stored paths to NFC so comparisons are stable across NFD/NFC
     # variants that macOS / watchdog may produce.
     known_paths = {_norm(p) for p in db.get_release_paths_for_source(source_id)}
     found_paths: set[str] = set()
     added = updated = 0
 
-    for entry in _iter_release_dirs(root, pattern):
+    for local_idx, entry in enumerate(entries, 1):
         parsed = parse_folder_name(entry.name, pattern)
+        if progress_cb:
+            progress_cb(entry.name, _done_offset + local_idx, total)
         if not parsed:
             continue
 
@@ -253,12 +271,35 @@ def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, in
     return added, updated, removed
 
 
-def scan_all(db: Database) -> tuple[int, int, int]:
+def scan_all(
+    db: Database,
+    progress_cb: ProgressCb | None = None,
+) -> tuple[int, int, int]:
+    sources = [s for s in db.get_sources() if s["enabled"]]
+
+    # Pre-count releases per source so progress bar uses a global total.
+    if progress_cb:
+        pattern = _load_pattern(db)
+        source_counts = [
+            len(list(_iter_release_dirs(Path(s["path"]), pattern)))
+            if Path(s["path"]).exists() else 0
+            for s in sources
+        ]
+        global_total = sum(source_counts)
+    else:
+        source_counts = [0] * len(sources)
+        global_total = 0
+
     total_a = total_u = total_r = 0
-    for source in db.get_sources():
-        if not source["enabled"]:
-            continue
-        a, u, r = scan_source(db, source["id"], source["path"])
+    done_offset = 0
+    for source, local_count in zip(sources, source_counts):
+        a, u, r = scan_source(
+            db, source["id"], source["path"],
+            progress_cb=progress_cb,
+            _done_offset=done_offset,
+            _global_total=global_total,
+        )
+        done_offset += local_count
         total_a += a
         total_u += u
         total_r += r

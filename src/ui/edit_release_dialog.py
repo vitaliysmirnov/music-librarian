@@ -245,7 +245,11 @@ class EditReleaseDialog(QDialog):
 
     def _init_tracklist(self, release: dict):
         if not release.get("is_available", True):
-            stored = self._db.get_release_tracks(release["folder_path"])
+            folder = release["folder_path"]
+            stored = self._db.get_release_tracks(folder)
+            if not stored and release.get("is_multi_disc"):
+                for disc in self._db.get_disc_entries(folder):
+                    stored += self._db.get_release_tracks(disc["folder_path"])
             if stored:
                 self._tl_paths   = [t["path"] for t in stored]
                 self._tl_tracks  = [(t["artist"], t["title"], t["duration_ms"]) for t in stored]
@@ -255,29 +259,35 @@ class EditReleaseDialog(QDialog):
         from src.utils.audio import audio_paths as _audio_paths, duration_from_file as _duration_from_file, read_track_tags as _read_track_tags
         from src.utils.cue import find_cue_for_folder, parse_cue
 
+        disc_folders: list[str] = []
         paths = _audio_paths(release["folder_path"])
         if not paths and release.get("is_multi_disc"):
             for disc in self._db.get_disc_entries(release["folder_path"]):
+                disc_folders.append(disc["folder_path"])
                 paths += _audio_paths(disc["folder_path"])
 
         self._tl_paths   = paths
         self._tl_tracks  = [_read_track_tags(p) for p in paths]
         self._tl_offsets = [(0, 0)] * len(paths)
 
+        # CUE expansion: only meaningful for a single-file release or a single disc
+        folders_to_check = disc_folders if disc_folders else [release["folder_path"]]
         if len(paths) == 1:
-            cue_path = find_cue_for_folder(Path(release["folder_path"]))
-            if cue_path:
-                audio_file, album_artist, _, cue_tracks = parse_cue(cue_path)
-                if audio_file and cue_tracks:
-                    total_ms = _duration_from_file(str(audio_file))
-                    self._tl_paths   = [str(audio_file)] * len(cue_tracks)
-                    self._tl_tracks  = [
-                        (t.artist or album_artist, t.title,
-                         t.end_ms - t.start_ms if t.end_ms else max(0, total_ms - t.start_ms))
-                        for t in cue_tracks
-                    ]
-                    self._tl_offsets = [(t.start_ms, t.end_ms) for t in cue_tracks]
-                    self._tl_is_cue  = True
+            for folder in folders_to_check:
+                cue_path = find_cue_for_folder(Path(folder))
+                if cue_path:
+                    audio_file, album_artist, _, cue_tracks = parse_cue(cue_path)
+                    if audio_file and cue_tracks:
+                        total_ms = _duration_from_file(str(audio_file))
+                        self._tl_paths   = [str(audio_file)] * len(cue_tracks)
+                        self._tl_tracks  = [
+                            (t.artist or album_artist, t.title,
+                             t.end_ms - t.start_ms if t.end_ms else max(0, total_ms - t.start_ms))
+                            for t in cue_tracks
+                        ]
+                        self._tl_offsets = [(t.start_ms, t.end_ms) for t in cue_tracks]
+                        self._tl_is_cue  = True
+                    break
 
 
     def _tl_selected_indices(self) -> list[int]:

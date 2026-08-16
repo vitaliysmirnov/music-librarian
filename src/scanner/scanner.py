@@ -83,6 +83,19 @@ def _disc_subdirs(entry: Path) -> list[Path]:
     )
 
 
+def _sync_tracks_if_changed(db: Database, folder_path: str) -> None:
+    """Re-scan and store tracks only when the folder's mtime has changed."""
+    try:
+        mtime = Path(folder_path).stat().st_mtime
+    except OSError:
+        return
+    if mtime == db.get_tracks_mtime(folder_path):
+        return
+    tracks = _scan_folder_tracks(folder_path)
+    db.upsert_release_tracks(folder_path, tracks)
+    db.set_tracks_mtime(folder_path, mtime)
+
+
 def _scan_folder_tracks(folder_path: str) -> list[dict]:
     """Read audio tracks from a single folder, expanding CUE sheets when present.
 
@@ -205,13 +218,9 @@ def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, in
                     is_multi_disc=False,
                     parent_path=path_str,
                 )
-                disc_tracks = _scan_folder_tracks(disc_path)
-                if disc_tracks:
-                    db.upsert_release_tracks(disc_path, disc_tracks)
+                _sync_tracks_if_changed(db, disc_path)
         else:
-            tracks = _scan_folder_tracks(path_str)
-            if tracks:
-                db.upsert_release_tracks(path_str, tracks)
+            _sync_tracks_if_changed(db, path_str)
         if existing is None:
             log.info("Added release%s: %s", " (multi-disc)" if is_multi else "", entry.name)
             added += 1

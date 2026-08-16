@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS releases (
     folder_path    TEXT    NOT NULL UNIQUE,
     last_seen_path TEXT    NOT NULL,
     is_available   INTEGER NOT NULL DEFAULT 1,
-    modified_at    TEXT    NOT NULL
+    modified_at    TEXT    NOT NULL,
+    tracks_mtime   REAL    NOT NULL DEFAULT 0.0
 );
 
 CREATE INDEX IF NOT EXISTS idx_releases_source  ON releases(source_id);
@@ -172,6 +173,8 @@ class Database:
             if "date_added" not in cols:
                 c.execute("ALTER TABLE releases ADD COLUMN date_added TEXT")
                 c.execute("UPDATE releases SET date_added = modified_at WHERE date_added IS NULL")
+            if "tracks_mtime" not in cols:
+                c.execute("ALTER TABLE releases ADD COLUMN tracks_mtime REAL NOT NULL DEFAULT 0.0")
 
             # Normalise all stored paths to NFC — older entries may be NFD (macOS
             # filesystem) while the scanner now writes NFC, causing duplicates.
@@ -673,8 +676,23 @@ class Database:
                 "SELECT * FROM releases WHERE folder_path=?", (folder_path,)
             ).fetchone()
 
+    def get_tracks_mtime(self, folder_path: str) -> float:
+        """Return the folder mtime recorded at last track scan; 0.0 if never scanned."""
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT tracks_mtime FROM releases WHERE folder_path=?", (folder_path,)
+            ).fetchone()
+            return row["tracks_mtime"] if row else 0.0
+
+    def set_tracks_mtime(self, folder_path: str, mtime: float) -> None:
+        """Record the folder mtime after a successful track scan."""
+        with self.conn() as c:
+            c.execute(
+                "UPDATE releases SET tracks_mtime=? WHERE folder_path=?", (mtime, folder_path)
+            )
+
     def upsert_release_tracks(self, folder_path: str, tracks: list[dict]) -> None:
-        """Replace stored tracklist for a release (called when dialog opens for an online release)."""
+        """Replace stored tracklist for a release."""
         with self.conn() as c:
             c.execute("DELETE FROM release_tracks WHERE folder_path=?", (folder_path,))
             c.executemany(

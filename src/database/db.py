@@ -414,6 +414,14 @@ class Database:
                 f"modified_at=? WHERE folder_path=?",
                 vals,
             )
+            # Update liked_tracks / playlist_tracks for the parent
+            for tbl in ("liked_tracks", "playlist_tracks"):
+                c.execute(
+                    f"UPDATE {tbl} SET folder_path=?,"
+                    f" path=? || SUBSTR(path, LENGTH(?)+1)"
+                    f" WHERE folder_path=?",
+                    (new_path, new_path, old_path, old_path),
+                )
             # Update disc children: adjust their folder_path and parent_path
             children = c.execute(
                 "SELECT id, folder_path FROM releases WHERE parent_path=?", (old_path,)
@@ -425,6 +433,13 @@ class Database:
                     "UPDATE releases SET folder_path=?, last_seen_path=?, parent_path=?, modified_at=? WHERE id=?",
                     (new_child, new_child, new_path, now, child["id"]),
                 )
+                for tbl in ("liked_tracks", "playlist_tracks"):
+                    c.execute(
+                        f"UPDATE {tbl} SET folder_path=?,"
+                        f" path=? || SUBSTR(path, LENGTH(?)+1)"
+                        f" WHERE folder_path=?",
+                        (new_child, new_child, old_child, old_child),
+                    )
         return True
 
     def delete_release_by_path(self, folder_path: str, cascade: bool = True):

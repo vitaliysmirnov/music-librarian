@@ -20,7 +20,6 @@ from src.utils.audio import AUDIO_EXTENSIONS
 from src.ui.edit_release_dialog import EditReleaseDialog
 from src.ui.liked_view import LikedTracksView
 from src.ui.playlist_view import PlaylistView
-from src.ui.tracklist_popup import TracklistPopup
 from src.ui.sidebar_panel import SidebarPanel
 from src.ui.style import ElidedTooltipDelegate, ROW_HEIGHT, TABLE_STYLE, SEARCH_STYLE
 
@@ -557,6 +556,7 @@ class _ReleasesView(QWidget):
     column_visibility_changed = Signal(int, bool)  # logical_idx, hidden
     liked_changed             = Signal()
     playlist_track_added      = Signal(int)  # playlist_id
+    folder_renamed            = Signal(str, str)  # (old_path, new_path)
 
     def __init__(self, db, query_fn, *,
                  sortable: bool = True,
@@ -573,7 +573,7 @@ class _ReleasesView(QWidget):
         self._settings_key   = settings_key
         self._expanded: set[str] = set()
         self._header_state: QByteArray | None = None
-        self._tracklist_popup: "TracklistPopup | None" = None
+        self._edit_popup: "EditReleaseDialog | None" = None
         self._count_label_fn = count_label_fn or (lambda n: f"Releases: {n}")
         self._setup_ui(show_bottom_bar)
 
@@ -697,41 +697,7 @@ class _ReleasesView(QWidget):
     def _on_double_click(self, proxy_index):
         if proxy_index.column() == COL_PLAY:
             return
-        self._show_tracklist()
-
-    # ── Tracklist ─────────────────────────────────────────────────────────────
-
-    def _show_tracklist(self):
-        row = self._selected_row()
-        if not row:
-            return
-        if not row.get("is_available", True):
-            artist = row.get("artist", "")
-            title  = row.get("title", "")
-            label  = f"«{artist} — {title}»" if artist and title else f"«{title or artist}»"
-            QMessageBox.information(
-                self, "Source Disconnected",
-                f"{label}\n\nThis release's source drive is currently disconnected.\n"
-                "Reconnect it to view the tracklist.",
-            )
-            return
-        if self._tracklist_popup is not None:
-            self._tracklist_popup.close()
-        self._tracklist_popup = TracklistPopup(row, self._db, self.window())
-        self._tracklist_popup.play_track.connect(self.play_track_requested)
-        self._tracklist_popup.enqueue_track.connect(self.enqueue_track_requested)
-        self._tracklist_popup.liked_changed.connect(self.liked_changed)
-        self._tracklist_popup.playlist_track_added.connect(self.playlist_track_added)
-        self._tracklist_popup.finished.connect(lambda: setattr(self, "_tracklist_popup", None))
-        self._tracklist_popup.show()
-
-    def sync_popup_like(self, path: str, liked: bool) -> None:
-        if self._tracklist_popup is not None:
-            self._tracklist_popup.sync_like(path, liked)
-
-    def refresh_popup_likes(self) -> None:
-        if self._tracklist_popup is not None:
-            self._tracklist_popup.refresh_likes()
+        self._edit_release()
 
     def clear_selection(self) -> None:
         self._table.selectionModel().clearSelection()
@@ -818,8 +784,6 @@ class _ReleasesView(QWidget):
         menu.addSeparator()
         act_edit = menu.addAction("Release Info")
         act_edit.setEnabled(available)
-        act_tracklist = menu.addAction("Tracklist")
-        act_tracklist.setEnabled(available)
 
         is_disc_child = bool(row.get("_is_disc_child"))
         menu.addSeparator()
@@ -849,8 +813,6 @@ class _ReleasesView(QWidget):
             self._open_release()
         elif chosen == act_edit:
             self._edit_release()
-        elif chosen == act_tracklist:
-            self._show_tracklist()
         elif chosen == act_move:
             self._move_release()
         elif chosen == act_move_artist:
@@ -1040,9 +1002,18 @@ class _ReleasesView(QWidget):
         row = self._selected_row()
         if not row or not row["is_available"]:
             return
-        dlg = EditReleaseDialog(self._db, row, self)
-        if dlg.exec() == EditReleaseDialog.Accepted:
-            self.refresh()
+        if self._edit_popup is not None:
+            self._edit_popup.close()
+        dlg = EditReleaseDialog(self._db, row, self.window())
+        dlg.play_track.connect(self.play_track_requested)
+        dlg.enqueue_track.connect(self.enqueue_track_requested)
+        dlg.liked_changed.connect(self.liked_changed)
+        dlg.playlist_track_added.connect(self.playlist_track_added)
+        dlg.folder_renamed.connect(self.folder_renamed)
+        dlg.accepted.connect(self.refresh)
+        dlg.finished.connect(lambda: setattr(self, "_edit_popup", None))
+        dlg.show()
+        self._edit_popup = dlg
 
     def _open_release(self, *_):
         row = self._selected_row()
@@ -1262,6 +1233,7 @@ class ReleasesTab(QWidget):
     playlist_track_added    = Signal(int)   # playlist_id
     playlists_changed       = Signal(list)  # list[dict] — id, name
     playlist_renamed        = Signal(int, str)  # playlist_id, new_name
+    folder_renamed          = Signal(str, str)  # (old_path, new_path)
 
     def __init__(self, db):
         super().__init__()
@@ -1330,6 +1302,7 @@ class ReleasesTab(QWidget):
         self._releases_view.release_moved.connect(self.release_moved)
         self._releases_view.liked_changed.connect(self._on_liked_changed)
         self._releases_view.playlist_track_added.connect(self._on_popup_playlist_track_added)
+        self._releases_view.folder_renamed.connect(self.folder_renamed)
 
         self._liked_view = LikedTracksView(self._db)
         self._liked_view.play_track_requested.connect(self.play_track_requested)
@@ -1374,7 +1347,6 @@ class ReleasesTab(QWidget):
     def _on_liked_changed(self):
         self._liked_view.refresh()
         self._playlist_view._refresh_model()
-        self._releases_view.refresh_popup_likes()
         self.liked_changed.emit()
 
     def _on_popup_playlist_track_added(self, playlist_id: int):
@@ -1513,10 +1485,6 @@ class ReleasesTab(QWidget):
     def refresh_liked(self):
         self._liked_view.refresh()
         self._playlist_view._refresh_model()
-        self._releases_view.refresh_popup_likes()
-
-    def sync_popup_like(self, path: str, liked: bool) -> None:
-        self._releases_view.sync_popup_like(path, liked)
 
     def invalidate_header_state(self):
         self._releases_view.invalidate_header_state()

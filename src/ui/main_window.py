@@ -203,6 +203,7 @@ class MainWindow(QMainWindow):
         self._releases_tab.play_track_requested.connect(self._player_engine.play_tracks)
         self._releases_tab.enqueue_track_requested.connect(self._player_engine.enqueue_tracks)
         self._releases_tab.liked_changed.connect(self._on_liked_changed)
+        self._releases_tab.folder_renamed.connect(self._on_release_folder_renamed)
         self._releases_tab.go_to_release.connect(lambda _: self._tabs.setCurrentWidget(self._releases_tab))
         self._player_bar.navigate_requested.connect(self._on_navigate_requested)
         self._player_bar.like_toggled.connect(self._on_like_toggled)
@@ -285,6 +286,46 @@ class MainWindow(QMainWindow):
     def _on_tray_metadata(self, artist: str, title: str):
         tip = f"{artist} — {title}" if artist else title
         self._update_tray_tooltip(tip)
+
+    def _on_release_folder_renamed(self, old_path: str, new_path: str):
+        """Patch queue paths/metadata and refresh UI after a folder rename."""
+        engine = self._player_engine
+        prefix = old_path if old_path.endswith("/") else old_path + "/"
+
+        # Fetch updated release metadata once (artist may have changed)
+        updated_row = self._db.get_release_by_path(new_path)
+        new_artist = dict(updated_row).get("artist") if updated_row else None
+
+        changed = False
+        for track in engine._queue:
+            if track.path.startswith(prefix):
+                track.path = new_path + track.path[len(old_path):]
+                if track.row.get("folder_path", "").startswith(old_path):
+                    track.row["folder_path"] = new_path + track.row["folder_path"][len(old_path):]
+                if new_artist:
+                    track.artist = new_artist
+                changed = True
+
+        if hasattr(engine, "_current_source") and engine._current_source and \
+                engine._current_source.startswith(prefix):
+            engine._current_source = new_path + engine._current_source[len(old_path):]
+
+        # Refresh player bar if the currently playing track is from the renamed folder
+        idx = engine.current_track_idx
+        q   = engine.queue
+        if 0 <= idx < len(q):
+            current = q[idx]
+            if current.path.startswith(new_path + "/"):
+                track_row = self._db.get_release_by_path(
+                    current.row.get("folder_path", new_path)
+                )
+                if track_row:
+                    current.row.update(dict(track_row))
+                engine.track_changed.emit(current.row, current.path, idx, len(q))
+                engine.metadata_changed.emit(current.artist, current.title)
+
+        if changed:
+            engine.queue_changed.emit()
 
     def _on_tray_state(self, playing: bool):
         if not playing:

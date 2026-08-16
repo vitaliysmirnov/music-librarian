@@ -12,14 +12,15 @@ A desktop music library manager for collections organised as folders on disk. Bu
 - **Real-time watch** — monitors the filesystem via watchdog and reflects changes (added/removed/renamed folders) instantly without a full rescan
 - **Drive awareness** — detects external drive connects/disconnects and marks releases as available/unavailable accordingly
 - **Built-in player** — plays audio files via Qt Multimedia; supports queue reordering, drag-to-enqueue from the table, shuffle mode, and queue persistence across restarts
-- **Tracklist popup** — shows all tracks in a release with artist, title and duration; play, enqueue, or like individual tracks; drag tracks to the queue or onto a playlist button; single-file FLAC+CUE albums are expanded into virtual tracks — each with its own artist, title, duration, and like state
+- **Release Info** — double-click any release (including offline ones) to open its Release Info dialog; editable metadata fields (artist, title, years, catalog number, media, custom tokens) with **Apply** (keep open) and **Save** (close) buttons; inline tracklist with per-track like buttons, play/enqueue/add-to-playlist context menu, and drag-to-queue support; cover art area with Set Cover / Remove Cover; for offline releases all fields are read-only but the cover and like/playlist actions remain functional; tracklist for offline releases is read from the database (populated at scan time)
 - **CUE virtual tracks** — releases stored as a single audio file with a `.cue` sheet are treated identically to multi-file releases: individual tracks can be liked, added to playlists, played, enqueued, and dragged anywhere that accepts tracks; per-track metadata (artist, title, duration, start/end offsets) is preserved through the full drag-and-drop path
-- **Liked Tracks** — like/unlike individual tracks from the tracklist popup or the player bar; dedicated Liked view with sortable, resizable, reorderable columns (Track, Release, Cat. No., Date Liked, Duration); right-click any column header to show/hide columns; Reset View button restores default column layout; Play All, drag-to-queue, and Go to Release; tracks whose source files are missing are shown in red with a restricted context menu (Remove only) and an info dialog on play attempt
-- **Playlists** — create, delete, and drag-to-reorder playlists in the sidebar; add tracks via drag-and-drop onto a playlist button or from a tracklist popup context menu; adding a track that is already in the playlist shows a confirmation dialog before inserting the duplicate; playlist view with resizable, reorderable columns (Track, Release, Cat. No., Date Added, Duration); right-click any column header to show/hide columns; Reset View button; drag-reorder rows, Play All, like column, and Go to Release; tracks whose source files are missing are shown in red with a restricted context menu (Remove only) and an info dialog on play attempt
+- **Track search** — the main search box matches track titles in addition to artist, title, catalog number, and custom tokens; results show the containing release
+- **Liked Tracks** — like/unlike individual tracks from the Release Info dialog or the player bar; dedicated Liked view with sortable, resizable, reorderable columns (Track, Release, Cat. No., Date Liked, Duration); right-click any column header to show/hide columns; Reset View button restores default column layout; Play All, drag-to-queue, and Go to Release; tracks whose source files are missing are shown in red with a restricted context menu (Remove only) and an info dialog on play attempt
+- **Playlists** — create, delete, and drag-to-reorder playlists in the sidebar; add tracks via drag-and-drop onto a playlist button or from the Release Info context menu; adding a track that is already in the playlist shows a confirmation dialog before inserting the duplicate; playlist view with resizable, reorderable columns (Track, Release, Cat. No., Date Added, Duration); right-click any column header to show/hide columns; Reset View button; drag-reorder rows, Play All, like column, and Go to Release; tracks whose source files are missing are shown in red with a restricted context menu (Remove only) and an info dialog on play attempt
 - **Go to Release** — navigate from the player bar, queue panel, Liked view, or playlist view directly to the playing track's release in the library; for tracks added from outside the library (e.g. Finder drag) opens the folder in Finder instead; multi-disc containers auto-expand
 - **Truncated-text tooltips** — hovering over any clipped cell in the Releases, Liked, or playlist tables shows the full text after the standard tooltip delay
 - **Volume normalisation** — optional ReplayGain-style peak normalisation; enabled per-session from Settings
-- **Release editing** — edit artist, title and other fields; renames the folder on disk automatically
+- **Folder rename** — saving metadata in Release Info renames the folder on disk; liked tracks and playlist entries are updated atomically to reflect the new path
 - **System tray** — runs in background with a tray icon; tooltip shows the currently playing track; main window can be hidden
 
 ---
@@ -194,17 +195,17 @@ src/
 │   │                      sidebar; navigation and playlist CRUD
 │   ├── player_bar.py      Transport controls, track/album labels, like button,
 │   │                      Go to Release context menu
-│   ├── player_engine.py   Queue management and QMediaPlayer wrapper;
-│   │                      _read_track_tags / _read_full_tags helpers
+│   ├── player_engine.py   Queue management and QMediaPlayer wrapper
 │   ├── queue_panel.py     Floating queue panel with drag-reorder and
 │   │                      Go to Release context menu
-│   ├── tracklist_popup.py Per-release track list dialog; like buttons;
-│   │                      drag tracks to queue or playlist buttons
+│   ├── tracklist_popup.py _confirm_add_duplicates helper (duplicate-track dialog)
 │   ├── liked_view.py      Liked Tracks table — sort, Play All, drag-to-queue,
 │   │                      Go to Release, add to playlist
 │   ├── playlist_view.py   Playlist content table — sort, drag-reorder, Play All,
 │   │                      URL drop, like column, Go to Release
-│   ├── edit_release_dialog.py  Metadata edit + folder rename
+│   ├── edit_release_dialog.py  Release Info dialog — metadata editing, Apply/Save
+│   │                      split, inline tracklist with like/playlist/play/enqueue,
+│   │                      cover art, offline read-only mode, CUE expansion
 │   ├── sources_tab.py     Add/remove/scan source directories
 │   ├── settings_tab.py    App settings (scan mode, mask, theme, log)
 │   ├── sidebar_panel.py   Left-column navigation; scrollable playlist list
@@ -214,7 +215,9 @@ src/
 │   └── theme.py           Light / dark / system theme switching
 ├── utils/
 │   ├── __init__.py        Shared helpers: fmt_ms(), open_path()
-│   ├── audio.py           AUDIO_EXTENSIONS constant
+│   ├── audio.py           AUDIO_EXTENSIONS + audio_paths(), read_track_tags(),
+│   │                      read_full_tags(), duration_from_file() — used by
+│   │                      scanner, player engine, and Release Info dialog
 │   ├── covers.py          Cover image save/load/rename
 │   ├── cue.py             CUE sheet parser — find_cue_for_folder(), parse_cue();
 │   │                      returns per-track offsets, artist, title, duration
@@ -245,7 +248,18 @@ A **release** corresponds to one folder on disk. Key fields:
 | `date_added` | ISO timestamp of first insert; never updated on re-scan |
 | `extras` | JSON blob for custom tokens |
 
-A **liked_track** stores per-track metadata at the time of liking. For CUE virtual tracks the primary key is the composite `(path, start_ms)` pair; regular file tracks have `start_ms = 0`.
+A **release_track** stores the tracklist of each release folder as scanned. Populated during library scan (not on dialog open) so it is available when the drive goes offline. For multi-disc releases tracks are stored under each disc child's `folder_path`, not the parent container's.
+
+| Field | Description |
+|---|---|
+| `folder_path` | Folder the track belongs to (disc child path for multi-disc) |
+| `path` | Absolute file path |
+| `track_number` | 1-based position within the folder |
+| `artist` / `title` | From file tags or CUE sheet |
+| `duration_ms` | Track duration in milliseconds |
+| `start_ms` / `end_ms` | CUE track offsets; `0` for whole-file tracks |
+
+A **liked_track** stores per-track metadata at the time of liking. For CUE virtual tracks the primary key is the composite `(path, start_ms)` pair; regular file tracks have `start_ms = 0`. When a release folder is renamed, all matching paths in `liked_tracks` and `playlist_tracks` are updated atomically using a `SUBSTR`-based replacement query.
 
 | Field | Description |
 |---|---|
@@ -257,7 +271,7 @@ A **liked_track** stores per-track metadata at the time of liking. For CUE virtu
 | `duration_ms` | Track duration in milliseconds |
 | `date_liked` | ISO timestamp |
 
-**Playlists** are stored in two tables: `playlists` (id, name, date_created, position) and `playlist_tracks` (playlist_id, path, start_ms, end_ms, artist, title, album, folder_path, duration_ms, position). The `(path, start_ms)` pair identifies CUE virtual tracks within a playlist. The `position` column on `playlists` preserves sidebar drag-reorder order.
+**Playlists** are stored in two tables: `playlists` (id, name, date_created, position) and `playlist_tracks` (playlist_id, path, start_ms, end_ms, artist, title, album, folder_path, duration_ms, position). The `(path, start_ms)` pair identifies CUE virtual tracks within a playlist. The `position` column on `playlists` preserves sidebar drag-reorder order. Paths in `playlist_tracks` are updated on folder rename alongside `liked_tracks`.
 
 ---
 

@@ -100,6 +100,19 @@ CREATE TABLE IF NOT EXISTS playlist_tracks (
     position    INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_playlist_tracks_pid ON playlist_tracks(playlist_id, position);
+
+CREATE TABLE IF NOT EXISTS release_tracks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    folder_path TEXT    NOT NULL,
+    path        TEXT    NOT NULL,
+    track_number INTEGER NOT NULL DEFAULT 0,
+    artist      TEXT    NOT NULL DEFAULT '',
+    title       TEXT    NOT NULL DEFAULT '',
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    start_ms    INTEGER NOT NULL DEFAULT 0,
+    end_ms      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_release_tracks_folder ON release_tracks(folder_path);
 """
 
 
@@ -259,6 +272,23 @@ class Database:
                 c.execute("ALTER TABLE playlist_tracks ADD COLUMN start_ms INTEGER NOT NULL DEFAULT 0")
                 c.execute("ALTER TABLE playlist_tracks ADD COLUMN end_ms   INTEGER NOT NULL DEFAULT 0")
 
+            has_rt = c.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='release_tracks'"
+            ).fetchone()[0]
+            if not has_rt:
+                c.execute("""CREATE TABLE release_tracks (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    folder_path TEXT    NOT NULL,
+                    path        TEXT    NOT NULL,
+                    track_number INTEGER NOT NULL DEFAULT 0,
+                    artist      TEXT    NOT NULL DEFAULT '',
+                    title       TEXT    NOT NULL DEFAULT '',
+                    duration_ms INTEGER NOT NULL DEFAULT 0,
+                    start_ms    INTEGER NOT NULL DEFAULT 0,
+                    end_ms      INTEGER NOT NULL DEFAULT 0
+                )""")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_release_tracks_folder ON release_tracks(folder_path)")
+
         # Rename cover files from NFD-keyed to NFC-keyed names — runs after the
         # DB transaction commits so a filesystem error here cannot roll it back.
         try:
@@ -414,8 +444,8 @@ class Database:
                 f"modified_at=? WHERE folder_path=?",
                 vals,
             )
-            # Update liked_tracks / playlist_tracks for the parent
-            for tbl in ("liked_tracks", "playlist_tracks"):
+            # Update liked_tracks / playlist_tracks / release_tracks for the parent
+            for tbl in ("liked_tracks", "playlist_tracks", "release_tracks"):
                 c.execute(
                     f"UPDATE {tbl} SET folder_path=?,"
                     f" path=? || SUBSTR(path, LENGTH(?)+1)"
@@ -433,7 +463,7 @@ class Database:
                     "UPDATE releases SET folder_path=?, last_seen_path=?, parent_path=?, modified_at=? WHERE id=?",
                     (new_child, new_child, new_path, now, child["id"]),
                 )
-                for tbl in ("liked_tracks", "playlist_tracks"):
+                for tbl in ("liked_tracks", "playlist_tracks", "release_tracks"):
                     c.execute(
                         f"UPDATE {tbl} SET folder_path=?,"
                         f" path=? || SUBSTR(path, LENGTH(?)+1)"
@@ -449,11 +479,13 @@ class Database:
                 "SELECT folder_path FROM releases WHERE folder_path=? OR parent_path=?",
                 (folder_path, folder_path),
             ).fetchall()
-            if rows and cascade:
+            if rows:
                 paths = [r[0] for r in rows]
                 ph = ",".join("?" * len(paths))
-                c.execute(f"DELETE FROM liked_tracks WHERE folder_path IN ({ph})", paths)
-                c.execute(f"DELETE FROM playlist_tracks WHERE folder_path IN ({ph})", paths)
+                c.execute(f"DELETE FROM release_tracks WHERE folder_path IN ({ph})", paths)
+                if cascade:
+                    c.execute(f"DELETE FROM liked_tracks WHERE folder_path IN ({ph})", paths)
+                    c.execute(f"DELETE FROM playlist_tracks WHERE folder_path IN ({ph})", paths)
             cur = c.execute(
                 "DELETE FROM releases WHERE folder_path=? OR parent_path=?",
                 (folder_path, folder_path),
@@ -546,7 +578,7 @@ class Database:
                     " WHERE folder_path=?",
                     (new_child, new_child, new_folder, old_child),
                 )
-                for tbl in ("liked_tracks", "playlist_tracks"):
+                for tbl in ("liked_tracks", "playlist_tracks", "release_tracks"):
                     c.execute(
                         f"UPDATE {tbl} SET folder_path=?,"
                         f" path=? || SUBSTR(path, LENGTH(?)+1)"
@@ -559,7 +591,7 @@ class Database:
                 "UPDATE releases SET folder_path=?, last_seen_path=? WHERE folder_path=?",
                 (new_folder, new_folder, old_folder),
             )
-            for tbl in ("liked_tracks", "playlist_tracks"):
+            for tbl in ("liked_tracks", "playlist_tracks", "release_tracks"):
                 c.execute(
                     f"UPDATE {tbl} SET folder_path=?,"
                     f" path=? || SUBSTR(path, LENGTH(?)+1)"
@@ -616,9 +648,10 @@ class Database:
                 " AND (py_lower(a.artist) LIKE ? OR py_lower(a.title) LIKE ?"
                 " OR py_lower(a.year_recorded) LIKE ? OR py_lower(a.year_released) LIKE ?"
                 " OR py_lower(a.catalog_number) LIKE ? OR py_lower(a.media) LIKE ?"
-                " OR EXISTS (SELECT 1 FROM json_each(a.extras) WHERE py_lower(value) LIKE ?))"
+                " OR EXISTS (SELECT 1 FROM json_each(a.extras) WHERE py_lower(value) LIKE ?)"
+                " OR EXISTS (SELECT 1 FROM release_tracks rt WHERE rt.folder_path = a.folder_path AND py_lower(rt.title) LIKE ?))"
             )
-            params += [w] * 7
+            params += [w] * 8
         query += " ORDER BY a.artist, a.year_recorded, a.title"
         with self.conn() as c:
             return c.execute(query, params).fetchall()
@@ -639,6 +672,30 @@ class Database:
             return c.execute(
                 "SELECT * FROM releases WHERE folder_path=?", (folder_path,)
             ).fetchone()
+
+    def upsert_release_tracks(self, folder_path: str, tracks: list[dict]) -> None:
+        """Replace stored tracklist for a release (called when dialog opens for an online release)."""
+        with self.conn() as c:
+            c.execute("DELETE FROM release_tracks WHERE folder_path=?", (folder_path,))
+            c.executemany(
+                "INSERT INTO release_tracks"
+                " (folder_path, path, track_number, artist, title, duration_ms, start_ms, end_ms)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                [
+                    (folder_path, t["path"], t["track_number"], t["artist"],
+                     t["title"], t["duration_ms"], t["start_ms"], t["end_ms"])
+                    for t in tracks
+                ],
+            )
+
+    def get_release_tracks(self, folder_path: str) -> list[dict]:
+        """Load stored tracklist for a release (used for offline releases)."""
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT * FROM release_tracks WHERE folder_path=? ORDER BY track_number, id",
+                (folder_path,),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def get_disc_entries(self, parent_path: str) -> list[sqlite3.Row]:
         with self.conn() as c:

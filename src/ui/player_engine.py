@@ -1,64 +1,20 @@
 import json
-import math
 import random
 from dataclasses import dataclass
 from pathlib import Path
 
-from mutagen import File as MutagenFile
-from mutagen.flac import FLAC
-from mutagen.monkeysaudio import MonkeysAudio
-from mutagen.mp3 import MP3
-from mutagen.wave import WAVE
-from mutagen.wavpack import WavPack
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaMetaData, QMediaPlayer
 
-from src.utils.audio import AUDIO_EXTENSIONS
+from src.utils.audio import (
+    AUDIO_EXTENSIONS,
+    audio_paths as _audio_paths,
+    duration_from_file as _duration_from_file,
+    read_full_tags as _read_full_tags,
+    read_track_tags as _read_track_tags,
+)
 from src.utils.cue import CueTrack, find_cue_for_file, find_cue_for_folder, parse_cue
 from src.utils.normalizer import VolumeNormalizer
-
-
-def _audio_paths(folder_path: str) -> list[str]:
-    folder = Path(folder_path)
-    if not folder.is_dir():
-        return []
-    return sorted(
-        str(f) for f in folder.iterdir()
-        if f.is_file()
-        and not f.name.startswith("._")
-        and f.suffix.lower() in AUDIO_EXTENSIONS
-    )
-
-
-def _read_track_tags(path: str) -> tuple[str, str, int]:
-    """Return (artist, title, duration_ms) from file tags; falls back to ("", stem, 0)."""
-    try:
-        audio = MutagenFile(path, easy=True)
-        if audio:
-            t = audio.tags or {}
-            artist = next((t[k][0] for k in ("artist", "albumartist") if k in t), "")
-            title  = t.get("title", [Path(path).stem])[0]
-            duration_ms = int(getattr(audio.info, "length", 0) * 1000)
-            return artist.strip(), title.strip(), duration_ms
-    except Exception:
-        pass
-    return "", Path(path).stem, 0
-
-
-def _read_full_tags(path: str) -> tuple[str, str, str, int]:
-    """Return (artist, title, album, duration_ms) from file tags."""
-    try:
-        audio = MutagenFile(path, easy=True)
-        if audio:
-            t = audio.tags or {}
-            artist = next((t[k][0] for k in ("artist", "albumartist") if k in t), "")
-            title  = t.get("title", [Path(path).stem])[0]
-            album  = t.get("album", [""])[0]
-            duration_ms = int(getattr(audio.info, "length", 0) * 1000)
-            return artist.strip(), title.strip(), album.strip(), duration_ms
-    except Exception:
-        pass
-    return "", Path(path).stem, "", 0
 
 
 
@@ -80,37 +36,6 @@ def _row_for_path(path: str, release_row: dict | None) -> tuple[dict, str, str, 
         "catalog_number": "",
     }
     return row, artist, title, duration_ms
-
-
-def _duration_from_file(path: str) -> int:
-    """Total duration of an audio file in ms.
-
-    MutagenFile() can return an object with info=None for certain FLAC
-    files (e.g. when STREAMINFO is read in an unexpected order). Falls
-    back to format-specific classes so we always get a real duration.
-    """
-    # Mutagen audio objects act as tag dicts, so bool(af) is False when
-    # the file has no tags — use "is not None" to avoid skipping info.
-    for easy in (False, True):
-        try:
-            af = MutagenFile(path, easy=easy)
-            if af is not None and af.info is not None:
-                ms = math.ceil(getattr(af.info, "length", 0) * 1000)
-                if ms > 0:
-                    return ms
-        except Exception:
-            pass
-    # Format-specific fallbacks
-    for cls in (FLAC, MP3, WAVE, WavPack, MonkeysAudio):
-        try:
-            af = cls(path)
-            if af is not None and af.info is not None:
-                ms = math.ceil(getattr(af.info, "length", 0) * 1000)
-                if ms > 0:
-                    return ms
-        except Exception:
-            pass
-    return 0
 
 
 def _cue_queue_tracks(

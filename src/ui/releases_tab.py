@@ -783,7 +783,7 @@ class _ReleasesView(QWidget):
 
         menu.addSeparator()
         act_edit = menu.addAction("Release Info")
-        act_edit.setEnabled(available)
+        act_edit.setEnabled(True)
 
         is_disc_child = bool(row.get("_is_disc_child"))
         menu.addSeparator()
@@ -1000,7 +1000,7 @@ class _ReleasesView(QWidget):
 
     def _edit_release(self, *_):
         row = self._selected_row()
-        if not row or not row["is_available"]:
+        if not row:
             return
         if self._edit_popup is not None:
             self._edit_popup.close()

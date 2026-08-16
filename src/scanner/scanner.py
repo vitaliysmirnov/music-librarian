@@ -5,7 +5,8 @@ from pathlib import Path
 from src.database.db import Database
 from src.scanner.mask import mask_to_regex, DEFAULT_MASK
 from src.scanner.parser import parse_folder_name
-from src.utils.audio import AUDIO_EXTENSIONS
+from src.utils.audio import AUDIO_EXTENSIONS, audio_paths, duration_from_file, read_track_tags
+from src.utils.cue import find_cue_for_folder, parse_cue
 from src.utils.logger import get_logger
 
 log = get_logger()
@@ -80,6 +81,50 @@ def _disc_subdirs(entry: Path) -> list[Path]:
         and not d.name.startswith(".")
         and not d.name.startswith("_")
     )
+
+
+def _scan_folder_tracks(folder_path: str) -> list[dict]:
+    """Read audio tracks from a single folder, expanding CUE sheets when present.
+
+    Returns a list of dicts ready for db.upsert_release_tracks.
+    """
+    paths = audio_paths(folder_path)
+    if not paths:
+        return []
+
+    if len(paths) == 1:
+        cue_path = find_cue_for_folder(Path(folder_path))
+        if cue_path:
+            audio_file, album_artist, _, cue_tracks = parse_cue(cue_path)
+            if audio_file and cue_tracks:
+                total_ms = duration_from_file(str(audio_file))
+                result = []
+                for i, t in enumerate(cue_tracks, 1):
+                    dur = t.end_ms - t.start_ms if t.end_ms else max(0, total_ms - t.start_ms)
+                    result.append({
+                        "path":         str(audio_file),
+                        "track_number": i,
+                        "artist":       t.artist or album_artist,
+                        "title":        t.title,
+                        "duration_ms":  dur,
+                        "start_ms":     t.start_ms,
+                        "end_ms":       t.end_ms,
+                    })
+                return result
+
+    result = []
+    for i, p in enumerate(paths, 1):
+        artist, title, duration_ms = read_track_tags(p)
+        result.append({
+            "path":         p,
+            "track_number": i,
+            "artist":       artist,
+            "title":        title,
+            "duration_ms":  duration_ms,
+            "start_ms":     0,
+            "end_ms":       0,
+        })
+    return result
 
 
 def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, int, int]:
@@ -160,6 +205,13 @@ def scan_source(db: Database, source_id: int, source_path: str) -> tuple[int, in
                     is_multi_disc=False,
                     parent_path=path_str,
                 )
+                disc_tracks = _scan_folder_tracks(disc_path)
+                if disc_tracks:
+                    db.upsert_release_tracks(disc_path, disc_tracks)
+        else:
+            tracks = _scan_folder_tracks(path_str)
+            if tracks:
+                db.upsert_release_tracks(path_str, tracks)
         if existing is None:
             log.info("Added release%s: %s", " (multi-disc)" if is_multi else "", entry.name)
             added += 1

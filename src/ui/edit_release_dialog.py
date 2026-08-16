@@ -244,7 +244,15 @@ class EditReleaseDialog(QDialog):
         self.resize(660, 480)
 
     def _init_tracklist(self, release: dict):
-        from src.ui.player_engine import _audio_paths, _duration_from_file, _read_track_tags
+        if not release.get("is_available", True):
+            stored = self._db.get_release_tracks(release["folder_path"])
+            if stored:
+                self._tl_paths   = [t["path"] for t in stored]
+                self._tl_tracks  = [(t["artist"], t["title"], t["duration_ms"]) for t in stored]
+                self._tl_offsets = [(t["start_ms"], t["end_ms"]) for t in stored]
+            return
+
+        from src.utils.audio import audio_paths as _audio_paths, duration_from_file as _duration_from_file, read_track_tags as _read_track_tags
         from src.utils.cue import find_cue_for_folder, parse_cue
 
         paths = _audio_paths(release["folder_path"])
@@ -271,6 +279,7 @@ class EditReleaseDialog(QDialog):
                     self._tl_offsets = [(t.start_ms, t.end_ms) for t in cue_tracks]
                     self._tl_is_cue  = True
 
+
     def _tl_selected_indices(self) -> list[int]:
         return [
             self._lw.row(item)
@@ -292,6 +301,8 @@ class EditReleaseDialog(QDialog):
         return rr
 
     def _tl_on_double_click(self, item: QListWidgetItem):
+        if not self._release.get("is_available", True):
+            return
         idx = self._lw.row(item)
         if 0 <= idx < len(self._tl_paths):
             self.play_track.emit([self._tl_paths[idx]], self._tl_build_release_row([idx]))
@@ -303,9 +314,12 @@ class EditReleaseDialog(QDialog):
         paths   = [self._tl_paths[i] for i in indices]
         if not paths:
             return
+        available = self._release.get("is_available", True)
         menu = QMenu(self)
         act_play    = menu.addAction("Play Now")
+        act_play.setEnabled(available)
         act_enqueue = menu.addAction("Add to Queue")
+        act_enqueue.setEnabled(available)
 
         pl_actions: dict = {}
         playlists = self._db.get_playlists()
@@ -517,6 +531,15 @@ class EditReleaseDialog(QDialog):
             form.addRow(token.replace("_", " ").title() + ":", edit)
             self._extra_edits[token] = edit
 
+        if not self._release.get("is_available", True):
+            _fields = [self._artist, self._year_recorded, self._title,
+                       self._catalog, self._media, self._year_released]
+            if self._disc_number is not None:
+                _fields.append(self._disc_number)
+            _fields.extend(self._extra_edits.values())
+            for _le in _fields:
+                _le.setReadOnly(True)
+
         form_col.addLayout(form)
 
         form_col.addStretch()
@@ -637,6 +660,7 @@ class EditReleaseDialog(QDialog):
             rl.addWidget(art_lbl, 1)
             rl.addWidget(ttl_lbl, 1)
             rl.addWidget(dur_lbl, 0)
+            rl.addSpacing(6)
             rl.addWidget(like_btn, 0)
             self._lw.setItemWidget(item, row_w)
 
@@ -690,6 +714,7 @@ class EditReleaseDialog(QDialog):
         hl.addWidget(art_h, 1)
         hl.addWidget(ttl_h, 1)
         hl.addWidget(dur_h, 0)
+        hl.addSpacing(6)
         hl.addWidget(lkd_h, 0)
 
         tl_section = QVBoxLayout()

@@ -6,7 +6,7 @@ A desktop music library manager for collections organised as folders on disk. Bu
 
 ## Features
 
-- **Automatic indexing** — scans configured source folders and stores metadata in a local SQLite database; no external services required
+- **Automatic indexing** — scans configured source folders in a background thread; a live progress bar in the status bar shows how many releases have been processed; the UI stays fully responsive during scanning
 - **Folder-name parsing** — a configurable mask extracts artist, year, title, catalog number, media type and any custom fields directly from folder names
 - **Searchable, sortable table** — multi-column sort with tiebreakers; columns driven by the mask; per-column visibility and reorderable headers
 - **Real-time watch** — monitors the filesystem via watchdog and reflects changes (added/removed/renamed folders) instantly without a full rescan
@@ -169,6 +169,8 @@ All settings are stored in the SQLite database (`music_librarian.db`) in the pla
 | Manual | Scan only when you click **Scan Now** |
 | Automatic | Scan on startup and every N minutes (configurable) |
 
+All scans run in a background `QThread` via `_ScanWorker`. A `QProgressBar` and counter label in the status bar update in real time as releases are processed; the **Scan Now** button is disabled for the duration. The UI remains fully interactive during a scan.
+
 The filesystem watcher runs independently of scan mode and handles real-time changes.
 
 ### Playback settings
@@ -188,9 +190,13 @@ src/
 ├── scanner/
 │   ├── mask.py            Compiles the folder-name mask string to a regex
 │   ├── parser.py          ParsedRelease dataclass + parse_folder_name()
-│   └── scanner.py         Filesystem walker; reads disk, writes DB
+│   └── scanner.py         Filesystem walker; reads disk, writes DB;
+│                          ProgressCb type alias; _sync_tracks_if_changed()
+│                          skips re-reading tags when folder mtime is unchanged
 ├── ui/
-│   ├── main_window.py     Top-level QMainWindow; wires all subsystems
+│   ├── main_window.py     Top-level QMainWindow; wires all subsystems;
+│   │                      _ScanWorker(QObject) runs scan_all() on a QThread
+│   │                      and emits progress/finished signals back to the UI
 │   ├── releases_tab.py    Library tab — releases view, liked view, playlist view,
 │   │                      sidebar; navigation and playlist CRUD
 │   ├── player_bar.py      Transport controls, track/album labels, like button,
@@ -246,6 +252,7 @@ A **release** corresponds to one folder on disk. Key fields:
 | `disc_number` | `0` for a multi-disc container; ≥1 for disc entries |
 | `is_available` | `0` when the source drive is offline |
 | `date_added` | ISO timestamp of first insert; never updated on re-scan |
+| `tracks_mtime` | `st_mtime` of the folder at the time tracks were last scanned; used to skip re-reading audio tags when the folder has not changed |
 | `extras` | JSON blob for custom tokens |
 
 A **release_track** stores the tracklist of each release folder as scanned. Populated during library scan (not on dialog open) so it is available when the drive goes offline. For multi-disc releases tracks are stored under each disc child's `folder_path`, not the parent container's.
@@ -296,6 +303,14 @@ macOS HFS+/APFS delivers paths in NFD form via watchdog while Python's `os.listd
 ### Text elision in table cells
 
 `ElidedTooltipDelegate` (in `style.py`) is set as the default delegate on all three table views. Its `paint()` method calls `QFontMetrics.elidedText()` and passes the pre-elided string directly to `style.drawControl(CE_ItemViewItem)`, bypassing `QStyledItemDelegate.paint()` which would call `initStyleOption()` a second time and overwrite the result. This is necessary because macOS `QMacStyle` routes text through CoreText which truncates at word boundaries; pre-eliding at character level prevents that. The tooltip threshold uses the same margin constant (`_MARGIN = 16 px`) as the elision.
+
+### Background scanning
+
+`_ScanWorker(QObject)` owns the scan state and runs on a dedicated `QThread`. Qt automatically uses queued connections for signals that cross thread boundaries, so `progress` and `finished` signals are safely delivered to the main-thread slots (`_on_scan_progress`, `_on_scan_finished`) without explicit locking.
+
+The SQLite database is opened with WAL mode and `check_same_thread=False`; each `conn()` call creates a new connection from the pool, so the main thread can read (e.g. to refresh the table) concurrently with the scan thread writing.
+
+Track tag reads are skipped via `_sync_tracks_if_changed()`: it compares the folder's current `st_mtime` against the stored `tracks_mtime` column, and only calls `_scan_folder_tracks()` (which reads mutagen tags) when the timestamp differs. The first scan after a schema migration reads everything; subsequent scans only call `os.stat()` per folder.
 
 ### Queue persistence
 

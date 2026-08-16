@@ -247,6 +247,8 @@ class MainWindow(QMainWindow):
         self._player_engine.track_not_found.connect(self._on_track_not_found)
 
         sb = QStatusBar()
+        sb.setContentsMargins(8, 0, 8, 0)
+        sb.setSizeGripEnabled(False)
         self.setStatusBar(sb)
 
         self._status_label = QLabel("")

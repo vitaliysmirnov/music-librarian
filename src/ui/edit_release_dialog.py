@@ -478,7 +478,6 @@ class EditReleaseDialog(QDialog):
 
         form = QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         self._artist = QLineEdit(self._release["artist"])
         self._year_recorded = QLineEdit(self._release["year_recorded"])
@@ -491,6 +490,10 @@ class EditReleaseDialog(QDialog):
         self._year_released = QLineEdit(self._release["year_released"] or "")
         self._year_released.setMaxLength(4)
         self._year_released.setFixedWidth(70)
+
+        for _le in (self._artist, self._year_recorded, self._title,
+                    self._catalog, self._media, self._year_released):
+            _le.setCursorPosition(0)
 
         form.addRow("Artist:", self._artist)
         form.addRow("Rec. Year:", self._year_recorded)
@@ -510,6 +513,7 @@ class EditReleaseDialog(QDialog):
 
         for token in self._extra_tokens:
             edit = QLineEdit(self._extras_current.get(token, ""))
+            edit.setCursorPosition(0)
             form.addRow(token.replace("_", " ").title() + ":", edit)
             self._extra_edits[token] = edit
 

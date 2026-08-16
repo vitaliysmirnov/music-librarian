@@ -506,10 +506,7 @@ class PlayerEngine(QObject):
             self._play_at(0)
         elif self._shuffle_mode:
             candidates = [i for i in range(len(self._queue)) if i != self._track_idx]
-            if candidates:
-                self._play_at(random.choice(candidates))
-            else:
-                self._player.stop()
+            self._play_at(random.choice(candidates) if candidates else self._track_idx)
         elif self._track_idx + 1 < len(self._queue):
             self._play_at(self._track_idx + 1)
         else:

@@ -786,7 +786,7 @@ class MainWindow(QMainWindow):
         if total > 0:
             self._scan_progress.setMaximum(total)
             self._scan_progress.setValue(done)
-        self._status_label.setText(f"Scanning — {done}/{total}  {name}")
+        self._status_label.setText(f"Scanning — {done}/{total}")
 
     def _on_scan_finished(self, added: int, updated: int, removed: int) -> None:
         now = datetime.now().strftime("%Y-%m-%d %H:%M")

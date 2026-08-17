@@ -662,7 +662,7 @@ class _ReleasesView(QWidget):
             bb.addStretch()
 
         self._count_label = QLabel("")
-        self._count_label.setStyleSheet("font-size: 11px;")
+        self._count_label.setStyleSheet("font-size: 11px; font-weight: 600; color: palette(placeholderText);")
         bb.addWidget(self._count_label)
         bb.addStretch()
 

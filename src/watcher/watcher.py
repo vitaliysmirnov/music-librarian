@@ -216,7 +216,7 @@ class LibraryWatcher:
 
     def _schedule_all(self):
         for source in self._db.get_sources():
-            if source["enabled"] and source["is_available"]:
+            if source["is_available"]:
                 self._add_watch(source["id"], source["path"])
 
     def _add_watch(self, source_id: int, path: str):
@@ -233,7 +233,7 @@ class LibraryWatcher:
 
     def refresh_watches(self):
         for source in self._db.get_sources():
-            if source["enabled"] and source["is_available"]:
+            if source["is_available"]:
                 self._add_watch(source["id"], source["path"])
             elif source["id"] in self._watches:
                 self._observer.unschedule(self._watches.pop(source["id"]))

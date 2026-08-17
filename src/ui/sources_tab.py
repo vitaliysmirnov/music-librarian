@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QTableWidgetItem, QFileDialog,
-    QAbstractItemView, QHeaderView, QMessageBox, QCheckBox,
+    QAbstractItemView, QHeaderView, QMessageBox,
 )
 
 from src.scanner.scanner import scan_source
@@ -27,8 +27,8 @@ class SourcesTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(["Path", "Enabled", "Available", "Last Scan"])
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(["Path", "Available", "Last Scan"])
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setShowGrid(False)
@@ -38,7 +38,6 @@ class SourcesTab(QWidget):
         hdr.setSectionResizeMode(0, QHeaderView.Stretch)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         hdr.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         vhdr = self._table.verticalHeader()
         vhdr.setVisible(False)
@@ -77,16 +76,9 @@ class SourcesTab(QWidget):
             path_item.setData(Qt.UserRole, src["id"])
             self._table.setItem(row, 0, path_item)
 
-            enabled_cb = QCheckBox()
-            enabled_cb.setChecked(bool(src["enabled"]))
-            enabled_cb.stateChanged.connect(
-                lambda state, sid=src["id"]: self._toggle_enabled(sid, state)
-            )
-            self._table.setCellWidget(row, 1, enabled_cb)
-
             avail = "Yes" if src["is_available"] else "No"
-            self._table.setItem(row, 2, QTableWidgetItem(avail))
-            self._table.setItem(row, 3, QTableWidgetItem(src["last_scan"] or "—"))
+            self._table.setItem(row, 1, QTableWidgetItem(avail))
+            self._table.setItem(row, 2, QTableWidgetItem(src["last_scan"] or "—"))
 
     def _add_source(self):
         path = QFileDialog.getExistingDirectory(self, "Select Music Folder")
@@ -130,8 +122,4 @@ class SourcesTab(QWidget):
             f"Releases added: {a}  |  updated: {u}  |  removed: {r}",
         )
         self.refresh()
-        self.sources_changed.emit()
-
-    def _toggle_enabled(self, source_id: int, state: int):
-        self._db.set_source_enabled(source_id, bool(state))
         self.sources_changed.emit()

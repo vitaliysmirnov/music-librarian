@@ -272,7 +272,7 @@ def scan_all(
     db: Database,
     progress_cb: ProgressCb | None = None,
 ) -> tuple[int, int, int]:
-    sources = [s for s in db.get_sources() if s["enabled"]]
+    sources = db.get_sources()
 
     # Pre-count releases per source so progress bar uses a global total.
     if progress_cb:

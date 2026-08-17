@@ -491,6 +491,7 @@ class _DragTableView(QTableView):
 
         source_model = self.model().sourceModel()
         urls: list[QUrl] = []
+        path_meta: dict[str, dict] = {}
         for proxy_row in sorted(selected_proxy_rows):
             source_index = self.model().mapToSource(
                 self.model().index(proxy_row, 0)
@@ -501,15 +502,24 @@ class _DragTableView(QTableView):
             if row.get("is_multi_disc") and self._disc_entries_fn:
                 for child in self._disc_entries_fn(row["folder_path"]):
                     if child["is_available"]:
-                        urls.extend(_audio_urls(child["folder_path"]))
+                        for url in _audio_urls(child["folder_path"]):
+                            urls.append(url)
+                            path_meta[url.toLocalFile()] = dict(child)
             elif row["is_available"]:
-                urls.extend(_audio_urls(row["folder_path"]))
+                for url in _audio_urls(row["folder_path"]):
+                    urls.append(url)
+                    path_meta[url.toLocalFile()] = dict(row)
 
         if not urls:
             return
 
         mime = QMimeData()
         mime.setUrls(urls)
+        if path_meta:
+            mime.setData(
+                "application/x-release-meta",
+                QByteArray(json.dumps(path_meta).encode()),
+            )
         drag = QDrag(self)
         drag.setMimeData(mime)
         drag.exec(Qt.DropAction.CopyAction)

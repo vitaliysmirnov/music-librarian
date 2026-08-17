@@ -1,16 +1,18 @@
 import html
+import json
 import re
 import urllib.parse
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QEvent, Signal
-from PySide6.QtGui import QMouseEvent, QPalette
+from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QMouseEvent, QPalette
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
 )
 
 from src.ui.player_engine import PlayerEngine
 from src.utils import fmt_ms as _fmt_ms
+from src.utils.audio import AUDIO_EXTENSIONS
 
 
 class _LinkLabel(QLabel):
@@ -216,6 +218,7 @@ class PlayerBar(QWidget):
         self._nav_id   = 0    # playlist_id when _nav_kind == "playlist"
         self.setFixedHeight(_BAR_H)
         self.setStyleSheet(_BAR_STYLE)
+        self.setAcceptDrops(True)
         self._setup_ui()
         self._connect_engine()
         self._update_enabled(False)
@@ -651,3 +654,65 @@ class PlayerBar(QWidget):
         for w in (self._btn_prev, self._btn_play, self._btn_next,
                   self._progress, self._btn_like, self._btn_shuffle):
             w.setEnabled(enabled)
+
+    # ── Drag-and-drop ─────────────────────────────────────────────────────
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            event.ignore()
+            return
+        raw_meta = mime.data("application/x-release-meta")
+        path_meta: dict[str, dict] = {}
+        if raw_meta and not raw_meta.isEmpty():
+            try:
+                path_meta = json.loads(bytes(raw_meta).decode())
+            except Exception:
+                pass
+        # Collect unique folders and audio files in drop order
+        folders: list[str] = []
+        seen_folders: set[str] = set()
+        tracks: list[tuple[str, dict | None]] = []
+        seen_track_paths: set[str] = set()
+        for url in mime.urls():
+            local = url.toLocalFile()
+            if not local:
+                continue
+            p = Path(local)
+            if p.is_dir():
+                fp = str(p)
+                if fp not in seen_folders:
+                    seen_folders.add(fp)
+                    folders.append(fp)
+            elif p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS:
+                tp = str(p)
+                if tp not in seen_track_paths:
+                    seen_track_paths.add(tp)
+                    tracks.append((tp, path_meta.get(tp)))
+        # Play like the ▶ button: replace queue and start immediately.
+        # Only the first item plays via play_release/play_tracks; remaining
+        # folders/tracks are appended so the full drop lands in the queue.
+        if folders:
+            self._engine.play_release({"folder_path": folders[0]})
+            for fp in folders[1:]:
+                self._engine.enqueue_release({"folder_path": fp})
+            for tp, meta in tracks:
+                self._engine.enqueue_tracks([tp], release_row=meta)
+        elif tracks:
+            first_path, first_meta = tracks[0]
+            self._engine.play_tracks([first_path], release_row=first_meta)
+            for tp, meta in tracks[1:]:
+                self._engine.enqueue_tracks([tp], release_row=meta)
+        event.acceptProposedAction()

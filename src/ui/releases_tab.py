@@ -1495,5 +1495,12 @@ class ReleasesTab(QWidget):
     def clear_releases_selection(self):
         self._releases_view.clear_selection()
 
+    def clear_current_selection(self):
+        current = self._stack.currentWidget()
+        if current is not None:
+            table = getattr(current, '_table', None)
+            if table is not None:
+                table.clearSelection()
+
     def collapse_releases(self):
         self._releases_view.collapse_all()

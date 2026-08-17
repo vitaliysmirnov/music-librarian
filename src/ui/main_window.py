@@ -102,6 +102,22 @@ def _apply_tray_template() -> None:
         pass
 
 
+class _DeselectFilter(QObject):
+    """Clears the active table selection when the user clicks outside ReleasesTab."""
+
+    def __init__(self, releases_tab, parent=None):
+        super().__init__(parent)
+        self._releases_tab = releases_tab
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.MouseButtonPress:
+            from PySide6.QtWidgets import QWidget
+            if isinstance(obj, QWidget) and obj.window() is self._releases_tab.window():
+                if not (self._releases_tab.isAncestorOf(obj) or obj is self._releases_tab):
+                    self._releases_tab.clear_current_selection()
+        return False
+
+
 class _FsChangeSignal(QObject):
     """Bridges the watchdog thread to the Qt main thread."""
     triggered = Signal()
@@ -267,6 +283,9 @@ class MainWindow(QMainWindow):
         self._scan_btn = QPushButton("Scan Now")
         self._scan_btn.clicked.connect(self._manual_scan)
         sb.addPermanentWidget(self._scan_btn)
+
+        self._deselect_filter = _DeselectFilter(self._releases_tab, self)
+        QApplication.instance().installEventFilter(self._deselect_filter)
 
         self._refresh_all()
 

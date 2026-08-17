@@ -685,7 +685,6 @@ class MainWindow(QMainWindow):
         if triggered:
             self._refresh_all()
             msg = "Drive connected, library updated"
-            self._status_label.setText(msg)
             self._tray.showMessage("Music Librarian", msg, QSystemTrayIcon.Information, 4000)
 
     def _on_drive_unmounted(self, mount_path: str):
@@ -700,9 +699,7 @@ class MainWindow(QMainWindow):
                 triggered = True
         if triggered:
             self._refresh_all()
-            msg = "Drive disconnected"
-            self._status_label.setText(msg)
-            self._tray.showMessage("Music Librarian", msg, QSystemTrayIcon.Warning, 4000)
+            self._tray.showMessage("Music Librarian", "Drive disconnected", QSystemTrayIcon.Warning, 4000)
 
     def _check_drives(self):
         newly_available, newly_gone = [], []
@@ -742,13 +739,11 @@ class MainWindow(QMainWindow):
         if newly_gone:
             self._refresh_all()
             names = ", ".join(Path(s["path"]).name for s in newly_gone)
-            self._status_label.setText(f"Drive disconnected: {names}")
             self._tray.showMessage("Music Librarian", f"Drive disconnected: {names}", QSystemTrayIcon.Warning, 4000)
 
         if newly_available:
             self._refresh_all()
             names = ", ".join(Path(s["path"]).name for s in newly_available)
-            self._status_label.setText(f"Drive connected, library updated: {names}")
             self._tray.showMessage("Music Librarian", f"Drive connected: {names}", QSystemTrayIcon.Information, 4000)
 
     # ── Release move ──────────────────────────────────────────────────────

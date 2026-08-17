@@ -65,8 +65,25 @@ def _cue_queue_tracks(
 
 def _queue_entries_for_folder(folder_path: str, release_row: dict | None) -> list["QueueTrack"]:
     """Return QueueTrack list for a folder, expanding a CUE sheet only when the
-    folder contains exactly one audio file (single-file CUE album)."""
+    folder contains exactly one audio file (single-file CUE album).
+
+    If no audio files are found directly in folder_path, subdirectories are
+    searched in sorted order — this handles multi-disc containers and deeply
+    nested releases dropped from Finder."""
     audio_files = _audio_paths(folder_path)
+
+    if not audio_files:
+        result: list[QueueTrack] = []
+        try:
+            subdirs = sorted(
+                d for d in Path(folder_path).iterdir()
+                if d.is_dir() and not d.name.startswith(".")
+            )
+        except OSError:
+            return []
+        for sub in subdirs:
+            result.extend(_queue_entries_for_folder(str(sub), release_row))
+        return result
 
     if len(audio_files) == 1:
         cue_path = find_cue_for_folder(Path(folder_path))

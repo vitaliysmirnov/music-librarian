@@ -11,7 +11,7 @@ A desktop music library manager for collections organised as folders on disk. Bu
 - **Searchable, sortable table** — multi-column sort with tiebreakers; columns driven by the mask; per-column visibility and reorderable headers
 - **Real-time watch** — monitors the filesystem via watchdog and reflects changes (added/removed/renamed folders) instantly without a full rescan
 - **Drive awareness** — detects external drive connects/disconnects and marks releases as available/unavailable accordingly
-- **Built-in player** — plays audio files via Qt Multimedia; supports queue reordering, drag-to-enqueue from the table, shuffle mode, and queue persistence across restarts
+- **Built-in player** — plays audio files via Qt Multimedia; supports queue reordering, drag-to-enqueue from the releases table to the queue panel, drag-to-player-bar to replace the queue and start playback immediately, shuffle mode, and queue persistence across restarts
 - **Release Info** — double-click any release (including offline ones) to open its Release Info dialog; editable metadata fields (artist, title, years, catalog number, media, custom tokens) with **Apply** (keep open) and **Save** (close) buttons; inline tracklist with per-track like buttons, play/enqueue/add-to-playlist context menu, and drag-to-queue support; cover art area with Set Cover / Remove Cover; for offline releases all fields are read-only but the cover and like/playlist actions remain functional; tracklist for offline releases is read from the database (populated at scan time)
 - **CUE virtual tracks** — releases stored as a single audio file with a `.cue` sheet are treated identically to multi-file releases: individual tracks can be liked, added to playlists, played, enqueued, and dragged anywhere that accepts tracks; per-track metadata (artist, title, duration, start/end offsets) is preserved through the full drag-and-drop path
 - **Track search** — the main search box matches track titles in addition to artist, title, catalog number, and custom tokens; results show the containing release
@@ -74,17 +74,20 @@ If a folder contains no audio files but has subdirectories that do, it is treate
 
 ## Layout
 
-Music Librarian supports two folder layouts:
+Music Librarian supports any number of grouping levels between the source root and a release folder — genre, label, artist, decade, or any other organising layer:
 
 ```
 # Flat — releases directly under the source root
 /Music/_фонотека/David Bowie - 1973 - Aladdin Sane [CD]/
 
-# Artist-organised — one level of artist folders
+# One grouping level (e.g. artist)
 /Music/_фонотека/David Bowie/David Bowie - 1973 - Aladdin Sane [CD]/
+
+# Multiple grouping levels (e.g. genre → label → release)
+/Music/_фонотека/_HARDCORE CONTINUUM/Defective Records/1998 [DR 028] DJ Who – Level 3 EP/
 ```
 
-Both layouts can coexist under the same source.
+The scanner recurses into non-matching subdirectories up to eight levels deep. A matching release folder is never descended into further, so audio content inside a release is never mistaken for a nested release. All layouts can coexist under the same source.
 
 ---
 
@@ -191,16 +194,21 @@ src/
 │   ├── mask.py            Compiles the folder-name mask string to a regex
 │   ├── parser.py          ParsedRelease dataclass + parse_folder_name()
 │   └── scanner.py         Filesystem walker; reads disk, writes DB;
-│                          ProgressCb type alias; _sync_tracks_if_changed()
-│                          skips re-reading tags when folder mtime is unchanged
+│                          ProgressCb type alias; _iter_release_dirs() recurses
+│                          up to _MAX_SCAN_DEPTH=8 levels into grouping folders;
+│                          _sync_tracks_if_changed() skips re-reading tags when
+│                          folder mtime is unchanged
 ├── ui/
 │   ├── main_window.py     Top-level QMainWindow; wires all subsystems;
 │   │                      _ScanWorker(QObject) runs scan_all() on a QThread
 │   │                      and emits progress/finished signals back to the UI
 │   ├── releases_tab.py    Library tab — releases view, liked view, playlist view,
-│   │                      sidebar; navigation and playlist CRUD
+│   │                      sidebar; navigation and playlist CRUD; drag attaches the
+│   │                      full release row (incl. catalog number) as
+│   │                      application/x-release-meta mime data
 │   ├── player_bar.py      Transport controls, track/album labels, like button,
-│   │                      Go to Release context menu
+│   │                      Go to Release context menu; accepts drag-and-drop —
+│   │                      drop replaces the queue and starts playback immediately
 │   ├── player_engine.py   Queue management and QMediaPlayer wrapper
 │   ├── queue_panel.py     Floating queue panel with drag-reorder and
 │   │                      Go to Release context menu
@@ -223,7 +231,9 @@ src/
 │   ├── __init__.py        Shared helpers: fmt_ms(), open_path()
 │   ├── audio.py           AUDIO_EXTENSIONS + audio_paths(), read_track_tags(),
 │   │                      read_full_tags(), duration_from_file() — used by
-│   │                      scanner, player engine, and Release Info dialog
+│   │                      scanner, player engine, and Release Info dialog;
+│   │                      all three guard with `is not None` (not truthiness) so
+│   │                      tagless WAV files return correct duration
 │   ├── covers.py          Cover image save/load/rename
 │   ├── cue.py             CUE sheet parser — find_cue_for_folder(), parse_cue();
 │   │                      returns per-track offsets, artist, title, duration

@@ -33,7 +33,7 @@ def read_track_tags(path: str) -> tuple[str, str, int]:
     """Return (artist, title, duration_ms) from file tags; falls back to ("", stem, 0)."""
     try:
         audio = MutagenFile(path, easy=True)
-        if audio:
+        if audio is not None:
             t = audio.tags or {}
             artist = next((t[k][0] for k in ("artist", "albumartist") if k in t), "")
             title  = t.get("title", [Path(path).stem])[0]
@@ -48,7 +48,7 @@ def read_full_tags(path: str) -> tuple[str, str, str, int]:
     """Return (artist, title, album, duration_ms) from file tags."""
     try:
         audio = MutagenFile(path, easy=True)
-        if audio:
+        if audio is not None:
             t = audio.tags or {}
             artist = next((t[k][0] for k in ("artist", "albumartist") if k in t), "")
             title  = t.get("title", [Path(path).stem])[0]

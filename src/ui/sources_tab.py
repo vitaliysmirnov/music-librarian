@@ -110,6 +110,8 @@ class SourcesTab(QWidget):
             self.sources_changed.emit()
 
     def _scan_selected(self):
+        if not self._table.selectedItems():
+            return
         row = self._table.currentRow()
         if row < 0:
             return

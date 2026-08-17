@@ -465,11 +465,13 @@ class _DragTableView(QTableView):
             return
 
         pressed_index = self.indexAt(self._drag_start)
-        if pressed_index.isValid() and pressed_index.column() == COL_PLAY:
+        if pressed_index.isValid():
             row = pressed_index.data(Qt.UserRole)
-            if not (row and row.get("is_multi_disc")):
+            if pressed_index.column() == COL_PLAY and not (row and row.get("is_multi_disc")):
                 super().mouseMoveEvent(event)
                 return
+            if row and not row.get("is_available"):
+                return  # suppress drag and selection extension for unavailable releases
 
         if (event.pos() - self._drag_start).manhattanLength() < QApplication.startDragDistance():
             return

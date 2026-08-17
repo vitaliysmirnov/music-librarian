@@ -34,15 +34,18 @@ def _load_pattern(db: Database) -> re.Pattern:
         return mask_to_regex(DEFAULT_MASK)
 
 
-def _iter_release_dirs(root: Path, pattern: re.Pattern):
+_MAX_SCAN_DEPTH = 8
+
+
+def _iter_release_dirs(root: Path, pattern: re.Pattern, _depth: int = 0):
     """
     Yield all directories whose name matches the release pattern.
 
-    The library may be structured as a flat list of release folders OR as
-    a two-level hierarchy (artist folder → release folder).  We walk up to
-    two levels deep: if a direct child matches, yield it; otherwise look
-    one level deeper inside it.  This covers both layouts without
-    accidentally descending into the audio/artwork contents of a release.
+    Recursively descends into non-matching directories (grouping folders such
+    as label, genre, or artist) until a matching release folder is found or
+    _MAX_SCAN_DEPTH is reached.  A matching folder is yielded and not
+    descended into further, so audio content inside a release is never
+    mistaken for nested releases.
     """
     try:
         children = [e for e in root.iterdir() if e.is_dir()]
@@ -53,14 +56,8 @@ def _iter_release_dirs(root: Path, pattern: re.Pattern):
     for entry in children:
         if parse_folder_name(entry.name, pattern):
             yield entry
-        else:
-            # Might be an artist/genre grouping folder — look one level deeper
-            try:
-                for sub in entry.iterdir():
-                    if sub.is_dir() and parse_folder_name(sub.name, pattern):
-                        yield sub
-            except PermissionError:
-                log.warning("Permission denied: %s", entry)
+        elif _depth < _MAX_SCAN_DEPTH:
+            yield from _iter_release_dirs(entry, pattern, _depth + 1)
 
 
 def _disc_subdirs(entry: Path) -> list[Path]:

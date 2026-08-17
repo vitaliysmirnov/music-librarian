@@ -81,6 +81,7 @@ class VolumeNormalizer:
     def __init__(self):
         self._cache: dict[str, float] = {}   # path → gain_db
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="normalizer")
+        self._alive = True
 
     def gain_linear_cached(self, path: str) -> float | None:
         """Return cached gain as a linear multiplier, or None if not yet analysed."""
@@ -88,10 +89,24 @@ class VolumeNormalizer:
             return db_to_linear(self._cache[path])
         return None
 
+    def shutdown(self) -> None:
+        """Signal the pool to stop and wait for any running analysis to finish.
+
+        Must be called before the owning QObject's C++ counterpart is destroyed,
+        so the on_done callback is never invoked on a dead object.
+        """
+        self._alive = False
+        self._pool.shutdown(wait=True)
+
     def analyze_async(self, path: str, on_done) -> None:
         """Analyse *path* in background. Calls on_done(path, gain_linear) when ready."""
+        if not self._alive:
+            return
         def _run():
+            if not self._alive:
+                return
             if path not in self._cache:
                 self._cache[path] = _gain_db(path)
-            on_done(path, db_to_linear(self._cache[path]))
+            if self._alive:
+                on_done(path, db_to_linear(self._cache[path]))
         self._pool.submit(_run)

@@ -606,6 +606,7 @@ class _ReleasesView(QWidget):
         self._table.setModel(self._proxy)
         self._table.setSortingEnabled(self._sortable)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setAlternatingRowColors(False)
         self._table.setShowGrid(False)
@@ -1421,22 +1422,26 @@ class ReleasesTab(QWidget):
         self.playlists_changed.emit(playlists)
 
     def _on_tracks_dropped_on_playlist(self, playlist_id: int, urls: list, cue_meta: list = None) -> None:
+        from src.ui.tracklist_popup import _confirm_add_duplicates
+        # Each duplicate: (path, artist, title, album, folder_path, duration_ms, start_ms, end_ms)
+        duplicates: list[tuple] = []
         if cue_meta:
             for entry in cue_meta:
                 path = entry.get("path", "")
                 if not Path(path).is_file():
                     continue
-                self._db.add_track_to_playlist(
-                    playlist_id,
-                    path,
-                    entry.get("artist", ""),
-                    entry.get("title", ""),
-                    entry.get("album", ""),
-                    entry.get("folder_path", str(Path(path).parent)),
-                    entry.get("duration_ms", 0),
-                    entry.get("start_ms", 0),
-                    entry.get("end_ms", 0),
+                artist = entry.get("artist", "")
+                title  = entry.get("title", "")
+                album  = entry.get("album", "")
+                folder = entry.get("folder_path", str(Path(path).parent))
+                dur    = entry.get("duration_ms", 0)
+                s_ms   = entry.get("start_ms", 0)
+                e_ms   = entry.get("end_ms", 0)
+                added  = self._db.add_track_to_playlist(
+                    playlist_id, path, artist, title, album, folder, dur, s_ms, e_ms,
                 )
+                if not added:
+                    duplicates.append((path, artist, title, album, folder, dur, s_ms, e_ms))
         else:
             from src.ui.player_engine import _read_full_tags
             for url in urls:
@@ -1446,9 +1451,16 @@ class ReleasesTab(QWidget):
                 p = Path(local)
                 if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS:
                     artist, title, album, duration_ms = _read_full_tags(str(p))
-                    self._db.add_track_to_playlist(
+                    added = self._db.add_track_to_playlist(
                         playlist_id, str(p), artist, title, album, str(p.parent), duration_ms,
                     )
+                    if not added:
+                        duplicates.append((str(p), artist, title, album, str(p.parent), duration_ms, 0, 0))
+        if duplicates and _confirm_add_duplicates(self, duplicates):
+            for (path, artist, title, album, folder, dur, s_ms, e_ms) in duplicates:
+                self._db.add_track_to_playlist_again(
+                    playlist_id, path, artist, title, album, folder, dur, s_ms, e_ms,
+                )
         self._on_popup_playlist_track_added(playlist_id)
 
     def _on_nav(self, key: str):

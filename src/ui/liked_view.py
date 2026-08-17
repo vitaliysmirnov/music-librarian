@@ -470,20 +470,30 @@ class LikedTracksView(QWidget):
         self.play_track_requested.emit([row["path"]], release_row)
 
     def _play_selected(self):
-        row = self._selected_row()
-        if not row:
+        rows = self._selected_rows()
+        if not rows:
             return
-        actual = Path(row["path"]).is_file()
-        if actual != (row.get("availability", "ok") == "ok"):
-            self.refresh()
-        if not actual:
-            self._unavailable_dialog(row)
-            return
-        release_row = {"folder_path": row["folder_path"],
-                       "title": row["album"], "artist": row["artist"],
-                       "catalog_number": row.get("catalog_number", ""),
-                       "_track_meta": [self._track_meta_for(row)]}
-        self.play_track_requested.emit([row["path"]], release_row)
+        if len(rows) == 1:
+            row = rows[0]
+            actual = Path(row["path"]).is_file()
+            if actual != (row.get("availability", "ok") == "ok"):
+                self.refresh()
+            if not actual:
+                self._unavailable_dialog(row)
+                return
+            release_row = {"folder_path": row["folder_path"],
+                           "title": row["album"], "artist": row["artist"],
+                           "catalog_number": row.get("catalog_number", ""),
+                           "_track_meta": [self._track_meta_for(row)]}
+            self.play_track_requested.emit([row["path"]], release_row)
+        else:
+            live = [r for r in rows if Path(r["path"]).is_file()]
+            if not live:
+                return
+            release_row = {"folder_path": "", "title": "Liked", "artist": "",
+                           "catalog_number": "", "_nav_kind": "liked",
+                           "_track_meta": [self._track_meta_for(r) for r in live]}
+            self.play_track_requested.emit([r["path"] for r in live], release_row)
 
     def _play_all(self):
         if any(Path(r["path"]).is_file() != (r.get("availability", "ok") == "ok")
@@ -529,12 +539,19 @@ class LikedTracksView(QWidget):
         proxy_index = self._table.indexAt(pos)
         if not proxy_index.isValid():
             return
-        self._table.selectionModel().setCurrentIndex(
-            proxy_index,
-            self._table.selectionModel().SelectionFlag.ClearAndSelect |
-            self._table.selectionModel().SelectionFlag.Rows,
-        )
-        row = self._selected_row()
+        # Keep existing multi-selection when right-clicking inside it;
+        # otherwise replace with just the clicked row.
+        already_selected = {idx.row() for idx in self._table.selectionModel().selectedRows()}
+        if proxy_index.row() not in already_selected:
+            self._table.selectionModel().setCurrentIndex(
+                proxy_index,
+                self._table.selectionModel().SelectionFlag.ClearAndSelect |
+                self._table.selectionModel().SelectionFlag.Rows,
+            )
+        multi = len(self._table.selectionModel().selectedRows()) > 1
+        # Use the right-clicked row's data for availability / Go to Release
+        src_row = self._proxy.mapToSource(proxy_index).row()
+        row = self._model.get_row(src_row)
         if not row:
             return
         avail = row.get("availability", "ok")
@@ -564,7 +581,7 @@ class LikedTracksView(QWidget):
 
         menu.addSeparator()
         act_go_release = menu.addAction("Go to Release")
-        act_go_release.setEnabled(bool(row.get("folder_path")))
+        act_go_release.setEnabled(not multi and bool(row.get("folder_path")))
         menu.addSeparator()
         act_unlike     = menu.addAction("Remove from Liked")
         chosen = menu.exec(self._table.viewport().mapToGlobal(pos))

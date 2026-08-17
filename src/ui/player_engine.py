@@ -412,13 +412,17 @@ class PlayerEngine(QObject):
         self._seek_gen += 1
         gen = self._seek_gen
         for i, frac in enumerate([0.25, 0.5, 0.75, 1.0]):
-            QTimer.singleShot(120 + i * 25, lambda f=frac, g=gen: self._seek_fade_step(f, g))
+            QTimer.singleShot(120 + i * 25, self, lambda f=frac, g=gen: self._seek_fade_step(f, g))
 
     def _seek_fade_step(self, frac: float, gen: int):
         if gen != self._seek_gen:
             return
         target = self._user_volume * self._norm_gain if self._normalize else self._user_volume
         self._audio.setVolume(max(0.0, min(1.0, target * frac)))
+
+    def shutdown(self) -> None:
+        """Shut down background workers. Call before the Qt object tree is torn down."""
+        self._normalizer.shutdown()
 
     def set_normalize(self, enabled: bool):
         self._normalize = enabled

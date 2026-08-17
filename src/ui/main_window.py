@@ -929,6 +929,7 @@ class MainWindow(QMainWindow):
     def quit(self):
         if self._data_dir:
             self._player_engine.save_queue_state(self._data_dir / "queue_state.json")
+        self._player_engine.shutdown()
         self._check_drives()
         self._stop_watcher()
         self._drive_monitor.stop()

@@ -574,20 +574,31 @@ class PlaylistView(QWidget):
         self.play_track_requested.emit([row["path"]], release_row)
 
     def _play_selected(self):
-        row = self._selected_row()
-        if not row:
+        rows = self._selected_rows()
+        if not rows:
             return
-        actual = Path(row["path"]).is_file()
-        if actual != (row.get("availability", "ok") == "ok"):
-            self._refresh_model()
-        if not actual:
-            self._unavailable_dialog(row)
-            return
-        release_row = {"folder_path": row["folder_path"],
-                       "title": row["album"], "artist": row["artist"],
-                       "catalog_number": row.get("catalog_number", ""),
-                       "_track_meta": [self._track_meta_for(row)]}
-        self.play_track_requested.emit([row["path"]], release_row)
+        if len(rows) == 1:
+            row = rows[0]
+            actual = Path(row["path"]).is_file()
+            if actual != (row.get("availability", "ok") == "ok"):
+                self._refresh_model()
+            if not actual:
+                self._unavailable_dialog(row)
+                return
+            release_row = {"folder_path": row["folder_path"],
+                           "title": row["album"], "artist": row["artist"],
+                           "catalog_number": row.get("catalog_number", ""),
+                           "_track_meta": [self._track_meta_for(row)]}
+            self.play_track_requested.emit([row["path"]], release_row)
+        else:
+            live = [r for r in rows if Path(r["path"]).is_file()]
+            if not live:
+                return
+            release_row = {"folder_path": "", "title": self._name, "artist": "",
+                           "catalog_number": "",
+                           "_nav_kind": "playlist", "_nav_id": self._playlist_id,
+                           "_track_meta": [self._track_meta_for(r) for r in live]}
+            self.play_track_requested.emit([r["path"] for r in live], release_row)
 
     def _play_all(self):
         if any(Path(r["path"]).is_file() != (r.get("availability", "ok") == "ok")
@@ -716,12 +727,18 @@ class PlaylistView(QWidget):
         proxy_index = self._table.indexAt(pos)
         if not proxy_index.isValid():
             return
-        self._table.selectionModel().setCurrentIndex(
-            proxy_index,
-            self._table.selectionModel().SelectionFlag.ClearAndSelect |
-            self._table.selectionModel().SelectionFlag.Rows,
-        )
-        row = self._selected_row()
+        # Keep existing multi-selection when right-clicking inside it;
+        # otherwise replace with just the clicked row.
+        already_selected = {idx.row() for idx in self._table.selectionModel().selectedRows()}
+        if proxy_index.row() not in already_selected:
+            self._table.selectionModel().setCurrentIndex(
+                proxy_index,
+                self._table.selectionModel().SelectionFlag.ClearAndSelect |
+                self._table.selectionModel().SelectionFlag.Rows,
+            )
+        multi = len(self._table.selectionModel().selectedRows()) > 1
+        # Use the right-clicked row's data for availability / Go to Release
+        row = self._model.get_row(proxy_index.row())
         if not row:
             return
         avail = row.get("availability", "ok")
@@ -745,7 +762,7 @@ class PlaylistView(QWidget):
         menu.addSeparator()
         act_like       = menu.addAction("Unlike" if is_liked else "Like")
         act_go_release = menu.addAction("Go to Release")
-        act_go_release.setEnabled(bool(row.get("folder_path")))
+        act_go_release.setEnabled(not multi and bool(row.get("folder_path")))
         menu.addSeparator()
         act_remove = menu.addAction("Remove from Playlist")
         chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
@@ -755,9 +772,11 @@ class PlaylistView(QWidget):
             self._enqueue_selected()
         elif chosen == act_like:
             if is_liked:
-                self._db.unlike_track(row["path"], row.get("start_ms", 0))
+                for r in self._selected_rows():
+                    self._db.unlike_track(r["path"], r.get("start_ms", 0))
             else:
-                self._like_row(row)
+                for r in self._selected_rows():
+                    self._like_row(r)
             self.liked_changed.emit()
         elif chosen == act_go_release:
             self.go_to_release.emit(row["folder_path"])

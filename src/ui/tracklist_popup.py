@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QByteArray, QEvent, QMimeData, QPoint, QUrl, Signal
-from PySide6.QtGui import QDrag, QFont, QFontMetrics, QKeySequence, QShortcut
+from PySide6.QtGui import QCursor, QDrag, QFont, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -159,6 +160,7 @@ class TracklistPopup(QDialog):
         fm = QFontMetrics(mono)
 
         self._like_buttons: list[QPushButton] = []
+        self._tooltips: dict[int, str] = {}  # row → full "artist — title" for truncated rows
         max_row_w = 0  # widest row text in pixels — used to size the dialog correctly
 
         for i, (path, (track_artist, track_title, ms)) in enumerate(
@@ -184,7 +186,11 @@ class TracklistPopup(QDialog):
             info_lbl.setFont(mono)
             info_lbl.setStyleSheet("border: none; padding: 1px 0;")
             if len(track_artist) > _MAX_ARTIST or len(track_title) > _MAX_TITLE:
-                info_lbl.setToolTip(f"{track_artist} — {track_title}")
+                # Don't call setToolTip() here — on Windows, widget-level tooltips
+                # inside a QListWidget custom item widget bypass the stylesheet and
+                # render with a black background.  Instead we intercept the propagated
+                # ToolTip event in the viewport eventFilter and use QToolTip.showText().
+                self._tooltips[i - 1] = f"{track_artist} — {track_title}"
             max_row_w = max(max_row_w, fm.horizontalAdvance(label_text))
 
             like_btn = QPushButton()
@@ -203,7 +209,8 @@ class TracklistPopup(QDialog):
             is_liked = db is not None and db.is_track_liked(path, track_start_ms)
             like_btn.setText("♥" if is_liked else "♡")
             like_btn.setChecked(is_liked)
-            like_btn.setToolTip("Like / Unlike")
+            # Tooltip omitted: widget-level tooltips on buttons with
+            # background:transparent render as black rectangles on Windows.
 
             def _make_toggle(p, idx_=i - 1, artist_=track_artist, title_=track_title,
                               dur_=ms, btn=like_btn):
@@ -245,14 +252,18 @@ class TracklistPopup(QDialog):
 
         visible = min(max(len(self._tracks), 1), 20)
         self._lw.setFixedHeight(visible * _ROW_H + 6)
-        # Base width on actual rendered text width so Courier New on Windows
-        # (wider than Menlo on macOS) never clips content.
-        # +40: like button (20px) + margins (8px) + scrollbar gap (12px)
-        self._lw.setMinimumWidth(max(560, max_row_w + 40))
 
         layout.addWidget(self._lw)
+        # QListWidget.sizeHint() ignores setMinimumWidth when items use custom
+        # widgets, so adjustSize() alone produces a narrow dialog.  Resize the
+        # dialog explicitly after adjustSize() to guarantee the full text fits:
+        # +80 covers like-btn (20) + row margins (8) + scrollbar (15-17 on
+        # Windows Fusion) + breathing room so text is never clipped.
         self.adjustSize()
-        self.setMinimumSize(self.sizeHint())
+        needed_w = max(560, max_row_w + 80)
+        if self.width() < needed_w:
+            self.resize(needed_w, self.height())
+        self.setMinimumSize(self.width(), self.height())
 
     def sync_like(self, path: str, liked: bool) -> None:
         """Update the like button for *path* without touching the database."""
@@ -293,6 +304,22 @@ class TracklistPopup(QDialog):
                         return True
             elif t == QEvent.Type.MouseButtonRelease:
                 self._drag_start_pos = None
+            elif t == QEvent.Type.ToolTip:
+                # Tooltip events from child widgets (info_lbl, like_btn) propagate
+                # here because those widgets have no toolTip set.  Using
+                # QToolTip.showText() bypasses the widget-level tooltip mechanism
+                # that renders as a black rectangle on Windows (Fusion + custom items).
+                vp = self._lw.viewport()
+                global_pos = QCursor.pos()
+                local_pos = vp.mapFromGlobal(global_pos)
+                idx = self._lw.indexAt(local_pos)
+                if idx.isValid():
+                    tip = self._tooltips.get(idx.row(), "")
+                    if tip:
+                        QToolTip.showText(global_pos, tip, vp)
+                        return True
+                QToolTip.hideText()
+                return True
         return super().eventFilter(obj, event)
 
     def _exec_drag(self, press_pos: QPoint):

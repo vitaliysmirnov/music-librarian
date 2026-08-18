@@ -390,6 +390,43 @@ class _MultiSortProxy(QSortFilterProxyModel):
         super().__init__()
         self._primary_col: int | None = None
         self._primary_order: Qt.SortOrder = Qt.AscendingOrder
+        # Maps source row index → source row index of the group leader (parent for
+        # disc children, self for everything else).  Built lazily and invalidated on
+        # modelAboutToBeReset so it is always current when lessThan is called.
+        self._group_leader: dict[int, int] = {}
+
+    def setSourceModel(self, model) -> None:
+        old = self.sourceModel()
+        if old is not None:
+            try:
+                old.modelAboutToBeReset.disconnect(self._invalidate_groups)
+            except RuntimeError:
+                pass
+        super().setSourceModel(model)
+        if model is not None:
+            model.modelAboutToBeReset.connect(self._invalidate_groups)
+
+    def _invalidate_groups(self) -> None:
+        self._group_leader.clear()
+
+    def _ensure_groups(self) -> None:
+        src = self.sourceModel()
+        n = src.rowCount(QModelIndex()) if src else 0
+        if len(self._group_leader) == n:
+            return
+        mapping: dict[int, int] = {}
+        current_leader: int | None = None
+        for r in range(n):
+            row_data = src.data(src.index(r, COL_PLAY), Qt.UserRole)
+            if row_data and row_data.get("_is_disc_child") and current_leader is not None:
+                mapping[r] = current_leader
+            else:
+                mapping[r] = r
+                current_leader = (
+                    r if (row_data and row_data.get("is_multi_disc") and not row_data.get("_is_disc_child"))
+                    else None
+                )
+        self._group_leader = mapping
 
     def _src(self) -> ReleasesModel:
         return self.sourceModel()
@@ -402,18 +439,25 @@ class _MultiSortProxy(QSortFilterProxyModel):
         super().sort(column, order)
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
+        self._ensure_groups()
         src = self._src()
 
-        left_row  = src.data(src.index(left.row(),  COL_PLAY), Qt.UserRole)
-        right_row = src.data(src.index(right.row(), COL_PLAY), Qt.UserRole)
+        ll = self._group_leader.get(left.row(),  left.row())
+        rl = self._group_leader.get(right.row(), right.row())
+
+        # Same group (parent vs child, or child vs child of same release): treat as
+        # equal so std::stable_sort preserves the flat-list order (parent always
+        # first).  This works for both ascending and descending sort directions.
+        if ll == rl:
+            return False
 
         avail_col = src._col_avail()
 
-        def val(index: QModelIndex, col: int) -> tuple:
+        def val(src_row: int, col: int) -> tuple:
             if col == avail_col:
-                row = src.data(src.index(index.row(), col), Qt.UserRole)
+                row = src.data(src.index(src_row, col), Qt.UserRole)
                 return (0, 0 if (row and row["is_available"]) else 1, "")
-            raw = (src.data(src.index(index.row(), col)) or "").strip()
+            raw = (src.data(src.index(src_row, col)) or "").strip()
             if not raw:
                 return (2, 0.0, "")
             try:
@@ -423,7 +467,7 @@ class _MultiSortProxy(QSortFilterProxyModel):
 
         default_primary = src.col_for_token("artist")
         primary = self._primary_col if self._primary_col is not None else default_primary
-        lv, rv = val(left, primary), val(right, primary)
+        lv, rv = val(ll, primary), val(rl, primary)
         if lv != rv:
             return lv < rv
 
@@ -431,21 +475,11 @@ class _MultiSortProxy(QSortFilterProxyModel):
             tb_col = src.col_for_token(tok)
             if primary == tb_col:
                 continue
-            lv, rv = val(left, tb_col), val(right, tb_col)
+            lv, rv = val(ll, tb_col), val(rl, tb_col)
             if lv != rv:
                 return lv < rv
 
-        # Final tiebreaker: multi-disc container sorts before its disc children.
-        # Use is_multi_disc flag (not disc_number) so this holds even if disc_number
-        # was not yet updated to 0 in an older DB entry.
-        def _sort_dn(row) -> int:
-            if row is None:
-                return 0
-            if row.get("is_multi_disc"):
-                return -1  # container always before disc children
-            return row.get("disc_number") or 0
-
-        return _sort_dn(left_row) < _sort_dn(right_row)
+        return ll < rl
 
 
 class _DragTableView(QTableView):

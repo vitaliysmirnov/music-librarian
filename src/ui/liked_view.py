@@ -381,6 +381,8 @@ class LikedTracksView(QWidget):
             self._save_header_state()
 
     def refresh(self) -> None:
+        saved = {(r["path"], r.get("start_ms", 0)) for r in self._selected_rows()}
+
         rows = []
         for r in self._db.get_liked_tracks():
             row = dict(r) | {"is_liked": True}
@@ -401,6 +403,21 @@ class LikedTracksView(QWidget):
             f"{n} tracks,  {mins} min {secs:02d} sec" if n else ""
         )
         self._play_all_btn.setEnabled(n > 0)
+
+        if saved:
+            sel = self._table.selectionModel()
+            sel.clearSelection()
+            first = None
+            for src_row in range(self._model.rowCount()):
+                r = self._model.get_row(src_row)
+                if r and (r["path"], r.get("start_ms", 0)) in saved:
+                    proxy_idx = self._proxy.mapFromSource(self._model.index(src_row, 0))
+                    if proxy_idx.isValid():
+                        sel.select(proxy_idx, sel.SelectionFlag.Select | sel.SelectionFlag.Rows)
+                        if first is None:
+                            first = proxy_idx
+            if first is not None:
+                self._table.scrollTo(first, QAbstractItemView.ScrollHint.EnsureVisible)
 
     # ── Selection ──────────────────────────────────────────────────────────
 

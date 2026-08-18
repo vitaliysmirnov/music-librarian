@@ -496,6 +496,8 @@ class PlaylistView(QWidget):
             self._refresh_model()
 
     def _refresh_model(self):
+        saved = {(r["path"], r.get("start_ms", 0)) for r in self._selected_rows()}
+
         rows = []
         for r in self._db.get_playlist_tracks(self._playlist_id):
             row = dict(r) | {"is_liked": self._db.is_track_liked(r["path"], r["start_ms"])}
@@ -516,6 +518,20 @@ class PlaylistView(QWidget):
             f"{n} tracks,  {mins} min {secs:02d} sec" if n else ""
         )
         self._play_all_btn.setEnabled(n > 0)
+
+        if saved:
+            sel = self._table.selectionModel()
+            sel.clearSelection()
+            first = None
+            for src_row in range(self._model.rowCount()):
+                r = self._model.get_row(src_row)
+                if r and (r["path"], r.get("start_ms", 0)) in saved:
+                    idx = self._model.index(src_row, 0)
+                    sel.select(idx, sel.SelectionFlag.Select | sel.SelectionFlag.Rows)
+                    if first is None:
+                        first = idx
+            if first is not None:
+                self._table.scrollTo(first, QAbstractItemView.ScrollHint.EnsureVisible)
 
     # ── Selection ─────────────────────────────────────────────────────────
 

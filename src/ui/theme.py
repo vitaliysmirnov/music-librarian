@@ -1,9 +1,71 @@
 import platform
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QEvent, QObject, QTimer
 from PySide6.QtGui import QPalette, QColor
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
+
+# ── Windows dark titlebar ─────────────────────────────────────────────────────
+
+_titlebar_filter: "QObject | None" = None
+
+
+def _dwm_set_titlebar_dark(hwnd: int, dark: bool) -> None:
+    """Call DwmSetWindowAttribute to flip the native title bar to dark/light."""
+    import ctypes
+    value = ctypes.c_int(1 if dark else 0)
+    size = ctypes.sizeof(value)
+    try:
+        # Attribute 20: Windows 10 Build 19041 (20H1) and Windows 11
+        r = ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(value), size)
+        if r != 0:
+            # Attribute 19: Windows 10 Build 18362–19040
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(value), size)
+    except Exception:
+        pass
+
+
+class _TitlebarFilter(QObject):
+    """Application-level event filter that keeps all top-level HWNDs in sync."""
+
+    def __init__(self, dark: bool, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._dark = dark
+
+    def set_dark(self, dark: bool) -> None:
+        self._dark = dark
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if isinstance(obj, QWidget) and obj.isWindow():
+            t = event.type()
+            if t in (QEvent.Type.WinIdChange, QEvent.Type.Show):
+                hwnd = obj.internalWinId()
+                if hwnd:
+                    _dwm_set_titlebar_dark(int(hwnd), self._dark)
+        return False
+
+
+def _apply_windows_titlebar_theme(dark: bool) -> None:
+    if platform.system() != "Windows":
+        return
+    global _titlebar_filter
+    app = QApplication.instance()
+    if app is None:
+        return
+    if _titlebar_filter is None:
+        _titlebar_filter = _TitlebarFilter(dark, app)
+        app.installEventFilter(_titlebar_filter)
+    else:
+        _titlebar_filter.set_dark(dark)  # type: ignore[attr-defined]
+    # Apply to all already-visible top-level windows (theme change at runtime).
+    for widget in app.topLevelWidgets():
+        if widget.isWindow():
+            hwnd = widget.internalWinId()
+            if hwnd:
+                _dwm_set_titlebar_dark(int(hwnd), dark)
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
 
 def apply_theme(theme: str) -> None:
     """Apply 'light', 'dark', or 'system' theme to the running QApplication."""
@@ -83,6 +145,7 @@ def _apply_palette(theme: str, app: QApplication) -> None:
     # ensures it survives the style re-creation.
     _force_qt_refresh()
     app.setStyleSheet(_TOOLTIP_STYLE_DARK if is_dark else _TOOLTIP_STYLE_LIGHT)
+    _apply_windows_titlebar_theme(is_dark)
 
 
 def _dark_palette() -> QPalette:

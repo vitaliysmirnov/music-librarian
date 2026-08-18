@@ -1,5 +1,6 @@
 import platform
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -150,6 +151,8 @@ class MainWindow(QMainWindow):
         self._watcher: LibraryWatcher | None = None
         self._scan_thread: QThread | None = None
         self._scan_worker: _ScanWorker | None = None
+        self._last_scan_ended_at: float = 0.0
+        self._scan_tray_action: QAction | None = None
 
         self._fs_signal = _FsChangeSignal()
         self._fs_signal.triggered.connect(self._on_fs_change)
@@ -615,12 +618,12 @@ class MainWindow(QMainWindow):
         self._tray.setToolTip("Music Librarian")
 
         menu = QMenu()
-        scan_action = QAction("Scan Now", self)
-        scan_action.triggered.connect(self._manual_scan)
+        self._scan_tray_action = QAction("Scan Now", self)
+        self._scan_tray_action.triggered.connect(self._manual_scan)
         quit_action = QAction("Quit", self)
         quit_action.triggered.connect(self.quit)
 
-        menu.addAction(scan_action)
+        menu.addAction(self._scan_tray_action)
         menu.addSeparator()
         menu.addAction(quit_action)
 
@@ -776,11 +779,14 @@ class MainWindow(QMainWindow):
 
     # ── Scan ──────────────────────────────────────────────────────────────
 
-    def _manual_scan(self):
+    def _manual_scan(self, *, auto: bool = False):
         if self._scan_thread and self._scan_thread.isRunning():
             return
-        log.info("Scan started")
+        log.info("%s started at %s", "Auto-scan" if auto else "Scan",
+                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         self._scan_btn.setEnabled(False)
+        if self._scan_tray_action:
+            self._scan_tray_action.setEnabled(False)
         self._status_label.setText("Scanning…")
         self._scan_progress.setValue(0)
         self._scan_progress.setMaximum(1)
@@ -807,24 +813,38 @@ class MainWindow(QMainWindow):
         self._status_label.setText(f"Scanning — {done}/{total}")
 
     def _on_scan_finished(self, added: int, updated: int, removed: int) -> None:
+        self._last_scan_ended_at = time.monotonic()
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         self._scan_progress.setVisible(False)
         self._scan_btn.setEnabled(True)
+        if self._scan_tray_action:
+            self._scan_tray_action.setEnabled(True)
         self._refresh_all()
         self._status_label.setText(
             f"Scan {now} — added: {added}, updated: {updated}, removed: {removed}"
         )
         if self._watcher:
             self._watcher.refresh_watches()
-        log.info("Scan finished: +%d updated=%d removed=%d", added, updated, removed)
+        log.info("Scan finished at %s: +%d updated=%d removed=%d",
+                 now, added, updated, removed)
+        # Reset the auto-timer so the next auto-scan fires exactly one full
+        # interval after this scan completed (not from when the timer started).
+        if self._auto_timer.isActive():
+            self._auto_timer.start()
 
     def _on_scan_thread_done(self) -> None:
         self._scan_thread = None
         self._scan_worker = None
 
     def _auto_scan(self):
-        log.info("Auto-scan triggered")
-        self._manual_scan()
+        if self._scan_thread and self._scan_thread.isRunning():
+            return
+        if self._last_scan_ended_at:
+            interval_min = int(self._db.get_setting("scan_interval_min", "60"))
+            elapsed = time.monotonic() - self._last_scan_ended_at
+            if elapsed < interval_min * 60:
+                return
+        self._manual_scan(auto=True)
 
     def _on_mask_changed(self):
         count = self._db.count_releases()

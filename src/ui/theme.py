@@ -9,9 +9,9 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 _titlebar_filter: "QObject | None" = None
 
-# Matches the app's dark Window palette colour (QColor(45, 45, 45) = #2D2D2D).
-# COLORREF format is 0x00BBGGRR; for a neutral gray R=G=B so the value is the same.
-_DARK_CAPTION_COLOR = 0x2D2D2D
+# Slightly lighter than the Window background (45,45,45) to match the macOS
+# dark title bar shade.  COLORREF format is 0x00BBGGRR; for neutral gray R=G=B.
+_DARK_CAPTION_COLOR = 0x3C3C3C
 _DWMWA_COLOR_DEFAULT = 0xFFFFFFFF  # sentinel that resets caption colour to system default
 
 try:

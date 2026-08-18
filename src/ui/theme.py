@@ -36,16 +36,6 @@ def _dwm_set_titlebar_dark(hwnd: int, dark: bool) -> None:
             color = ctypes.c_uint(_DARK_CAPTION_COLOR if dark else _DWMWA_COLOR_DEFAULT)
             ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(color), ctypes.sizeof(color))
 
-        # SetWindowTheme causes Windows to send WM_THEMECHANGED to the window,
-        # which makes DWM immediately repaint the non-client area and pick up
-        # the DWMWA_USE_IMMERSIVE_DARK_MODE attribute set above.  The other
-        # approaches (SWP_FRAMECHANGED, WM_NCACTIVATE, widget.update) all fail
-        # because DWM reuses its cached composition surface without a theme change.
-        ctypes.windll.uxtheme.SetWindowTheme(
-            hwnd,
-            "DarkMode_Explorer" if dark else "",
-            None,
-        )
     except Exception:
         pass
 
@@ -90,10 +80,20 @@ def _apply_windows_titlebar_theme(dark: bool) -> None:
         if a is None:
             return
         for w in a.topLevelWidgets():
-            if w.isWindow():
+            if w.isWindow() and not w.isMinimized():
                 hwnd = w.internalWinId()
                 if hwnd:
                     _dwm_set_titlebar_dark(int(hwnd), dark)
+                # All soft triggers (SWP_FRAMECHANGED, WM_NCACTIVATE,
+                # WM_THEMECHANGED, widget.update) fail because DWM does not
+                # invalidate its cached composition surface without a real size
+                # change.  A 1 px width nudge forces DWM to allocate a new
+                # surface and render it with the current dark-mode attribute.
+                # Both SetWindowPos calls fire before the next vsync so the
+                # transient width is never painted on screen.
+                _w = w.width()
+                w.resize(_w + 1, w.height())
+                w.resize(_w, w.height())
     QTimer.singleShot(0, _apply_all)
 
 

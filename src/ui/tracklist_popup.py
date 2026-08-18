@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QByteArray, QEvent, QMimeData, QPoint, QSize, QTimer, QUrl, Signal
+from PySide6.QtCore import Qt, QByteArray, QEvent, QMimeData, QPoint, QRect, QSize, QTimer, QUrl, Signal
 from PySide6.QtGui import QCursor, QDrag, QFont, QFontMetrics, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -327,17 +327,21 @@ class TracklistPopup(QDialog):
 
     def showEvent(self, event: QEvent) -> None:
         super().showEvent(event)
-        # QListWidget positions item widgets via a 0-ms timer (doItemsLayout).
-        # That timer was started by setItemWidget() calls before the dialog layout
-        # had applied _lw's final width, so it may fire with the wrong viewport size.
-        # Schedule a second pass (also 0-ms, so still before the first WM_PAINT on
-        # Windows) to re-run doItemsLayout() after layout().activate() has set the
-        # correct viewport width.
-        QTimer.singleShot(0, self._relayout_items)
+        # By the time this 0-ms timer fires the dialog layout has activated and
+        # _lw.viewport() has its final width.  Directly set each item widget's
+        # geometry (the same calculation Qt uses in updateEditorGeometries on
+        # resize) so the first visible frame is already correct on Windows.
+        QTimer.singleShot(0, self._fix_item_geometry)
 
-    def _relayout_items(self) -> None:
-        self.layout().activate()  # ensure _lw has its final width
-        self._lw.doItemsLayout()  # re-position all item widgets
+    def _fix_item_geometry(self) -> None:
+        vp = self._lw.viewport()
+        w = vp.width()
+        if w <= 0:
+            return
+        for i in range(self._lw.count()):
+            widget = self._lw.itemWidget(self._lw.item(i))
+            if widget is not None:
+                widget.setGeometry(QRect(0, i * _ROW_H, w, _ROW_H))
 
     def sync_like(self, path: str, liked: bool) -> None:
         """Update the like button for *path* without touching the database."""

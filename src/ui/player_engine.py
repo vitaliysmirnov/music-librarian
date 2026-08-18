@@ -189,6 +189,15 @@ class PlayerEngine(QObject):
         self._player.positionChanged.connect(self._on_position_changed)
         self._player.durationChanged.connect(self._on_file_duration_changed)
 
+        # On Windows the WMF backend may fire positionChanged infrequently.
+        # Poll position every 200 ms while playing as a fallback so the
+        # progress bar always updates smoothly regardless of backend.
+        self._pos_poll_timer = QTimer(self)
+        self._pos_poll_timer.setInterval(200)
+        self._pos_poll_timer.timeout.connect(
+            lambda: self._on_position_changed(self._player.position())
+        )
+
         self._media_devices = QMediaDevices(self)
         self._media_devices.audioOutputsChanged.connect(self._on_audio_device_changed)
 
@@ -573,7 +582,12 @@ class PlayerEngine(QObject):
                 self._player.stop()
 
     def _on_state_changed(self, state):
-        self.state_changed.emit(state == QMediaPlayer.PlaybackState.PlayingState)
+        playing = state == QMediaPlayer.PlaybackState.PlayingState
+        if playing:
+            self._pos_poll_timer.start()
+        else:
+            self._pos_poll_timer.stop()
+        self.state_changed.emit(playing)
         if state == QMediaPlayer.PlaybackState.StoppedState:
             self._cue_advancing = False
             self.position_changed.emit(0)

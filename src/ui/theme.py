@@ -1,6 +1,6 @@
 import platform
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import QApplication
 
@@ -39,7 +39,7 @@ def _force_qt_refresh() -> None:
     app = QApplication.instance()
     if app is None:
         return
-    # Re-creating the style makes Qt re-query the macOS platform palette.
+    # Re-creating the style makes Qt re-query the platform palette.
     app.setStyle(app.style().objectName())
     # Re-polish every widget so stylesheet palette() tokens resolve fresh.
     for widget in app.allWidgets():
@@ -48,31 +48,54 @@ def _force_qt_refresh() -> None:
         widget.update()
 
 
+def _system_is_dark(app: QApplication) -> bool:
+    """Return True when the OS is in dark mode (Qt 6.5+ colorScheme API)."""
+    try:
+        return app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+    except AttributeError:
+        return False
+
+
 def _apply_palette(theme: str, app: QApplication) -> None:
     app.setStyle("Fusion")
     if theme == "dark":
         app.setPalette(_dark_palette())
-    else:
+    elif theme == "light":
         app.setPalette(_light_palette())
+    else:  # system — follow OS dark/light preference
+        if _system_is_dark(app):
+            app.setPalette(_dark_palette())
+        else:
+            app.setPalette(_light_palette())
+    _force_qt_refresh()
 
 
 def _dark_palette() -> QPalette:
     p = QPalette()
-    p.setColor(QPalette.ColorRole.Window,          QColor(45,  45,  45))
-    p.setColor(QPalette.ColorRole.WindowText,      QColor(220, 220, 220))
-    p.setColor(QPalette.ColorRole.Base,            QColor(30,  30,  30))
-    p.setColor(QPalette.ColorRole.AlternateBase,   QColor(60,  60,  60))
-    p.setColor(QPalette.ColorRole.ToolTipBase,     QColor(30,  30,  30))
-    p.setColor(QPalette.ColorRole.ToolTipText,     QColor(220, 220, 220))
-    p.setColor(QPalette.ColorRole.Text,            QColor(220, 220, 220))
-    p.setColor(QPalette.ColorRole.Button,          QColor(60,  60,  60))
-    p.setColor(QPalette.ColorRole.ButtonText,      QColor(220, 220, 220))
-    p.setColor(QPalette.ColorRole.BrightText,      QColor(255, 80,  80))
-    p.setColor(QPalette.ColorRole.Link,            QColor(42,  130, 218))
-    p.setColor(QPalette.ColorRole.Highlight,       QColor(42,  130, 218))
-    p.setColor(QPalette.ColorRole.HighlightedText, QColor(0,   0,   0))
-    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,       QColor(120, 120, 120))
-    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(120, 120, 120))
+    p.setColor(QPalette.ColorRole.Window,           QColor(45,  45,  45))
+    p.setColor(QPalette.ColorRole.WindowText,       QColor(220, 220, 220))
+    p.setColor(QPalette.ColorRole.Base,             QColor(30,  30,  30))
+    p.setColor(QPalette.ColorRole.AlternateBase,    QColor(60,  60,  60))
+    p.setColor(QPalette.ColorRole.ToolTipBase,      QColor(30,  30,  30))
+    p.setColor(QPalette.ColorRole.ToolTipText,      QColor(220, 220, 220))
+    p.setColor(QPalette.ColorRole.Text,             QColor(220, 220, 220))
+    p.setColor(QPalette.ColorRole.Button,           QColor(60,  60,  60))
+    p.setColor(QPalette.ColorRole.ButtonText,       QColor(220, 220, 220))
+    p.setColor(QPalette.ColorRole.BrightText,       QColor(255, 80,  80))
+    p.setColor(QPalette.ColorRole.Link,             QColor(42,  130, 218))
+    p.setColor(QPalette.ColorRole.Highlight,        QColor(42,  130, 218))
+    p.setColor(QPalette.ColorRole.HighlightedText,  QColor(0,   0,   0))
+    # Roles used by Fusion-style borders, groove lines, and shadows
+    p.setColor(QPalette.ColorRole.Mid,              QColor(80,  80,  80))
+    p.setColor(QPalette.ColorRole.Midlight,         QColor(70,  70,  70))
+    p.setColor(QPalette.ColorRole.Dark,             QColor(35,  35,  35))
+    p.setColor(QPalette.ColorRole.Shadow,           QColor(20,  20,  20))
+    # Used in stylesheet palette(placeholderText) tokens
+    p.setColor(QPalette.ColorRole.PlaceholderText,  QColor(140, 140, 140))
+    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,            QColor(120, 120, 120))
+    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText,      QColor(120, 120, 120))
+    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText,      QColor(120, 120, 120))
+    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.PlaceholderText, QColor(90,  90,  90))
     return p
 
 

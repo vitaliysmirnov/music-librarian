@@ -1,11 +1,12 @@
 import html
 import json
+import platform
 import re
 import urllib.parse
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QEvent, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QMouseEvent, QPalette
+from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QFont, QMouseEvent, QPalette
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
 )
@@ -13,6 +14,11 @@ from PySide6.QtWidgets import (
 from src.ui.player_engine import PlayerEngine
 from src.utils import fmt_ms as _fmt_ms
 from src.utils.audio import AUDIO_EXTENSIONS
+
+# On Windows the system UI font (Segoe UI) renders Unicode transport symbols
+# from various fallback fonts with inconsistent metrics. "Segoe UI Symbol"
+# provides all required glyphs (⏮ ▶ ⏭ ⇄ ☰ ♡ ♥) at the correct weight.
+_SYMBOL_FONT_FAMILY = "Segoe UI Symbol" if platform.system() == "Windows" else ""
 
 
 class _LinkLabel(QLabel):
@@ -287,6 +293,12 @@ class PlayerBar(QWidget):
         self._btn_like.setEnabled(False)
         self._btn_like.toggled.connect(self._on_like_toggled)
 
+        if _SYMBOL_FONT_FAMILY:
+            _sym_font = QFont(_SYMBOL_FONT_FAMILY)
+            for _btn in (self._btn_prev, self._btn_play, self._btn_next,
+                         self._btn_shuffle, self._btn_like):
+                _btn.setFont(_sym_font)
+
         self._transport = QWidget(self)
         tl = QHBoxLayout(self._transport)
         tl.setContentsMargins(0, 0, 0, 0)
@@ -344,6 +356,8 @@ class PlayerBar(QWidget):
         self._btn_queue.setCheckable(True)
         self._btn_queue.setFixedSize(28, 26)
         self._btn_queue.clicked.connect(self.queue_toggled)
+        if _SYMBOL_FONT_FAMILY:
+            self._btn_queue.setFont(QFont(_SYMBOL_FONT_FAMILY))
 
         self._vol_block = QWidget(self)
         rl = QHBoxLayout(self._vol_block)

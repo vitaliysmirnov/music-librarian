@@ -53,14 +53,24 @@ class _ElidedLabel(QLabel):
     def minimumSizeHint(self):
         return QSize(0, super().minimumSizeHint().height())
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
+    def _update_text(self):
         if self.width() > 0:
             elided = self.fontMetrics().elidedText(
                 self._full_text, Qt.TextElideMode.ElideRight, self.width()
             )
             # super().setText avoids triggering QLabel's own sizeHint invalidation path
             super().setText(elided)
+
+    def showEvent(self, event):
+        # resizeEvent may not have fired yet with the final geometry when the widget
+        # is first shown (item widgets inside QListWidget get their geometry set
+        # during the view's layout pass, which happens at show time).
+        super().showEvent(event)
+        self._update_text()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_text()
 
 
 def _confirm_add_duplicates(parent, duplicates: list) -> bool:

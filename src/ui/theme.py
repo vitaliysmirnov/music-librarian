@@ -117,4 +117,12 @@ def _dark_palette() -> QPalette:
 def _light_palette() -> QPalette:
     from PySide6.QtWidgets import QStyleFactory
     style = QStyleFactory.create("Fusion")
-    return style.standardPalette() if style else QPalette()
+    p = style.standardPalette() if style else QPalette()
+    # Fusion's standardPalette() on Windows derives ToolTipBase from the OS system
+    # tooltip colour (COLOR_INFOBK), which can be black when the OS is in dark mode.
+    # This makes tooltip text invisible on a light-theme app that the user has opened
+    # while the OS is in dark mode.  Set both roles explicitly so the tooltip always
+    # gets a readable light-yellow background with black text.
+    p.setColor(QPalette.ColorRole.ToolTipBase, QColor(255, 255, 220))
+    p.setColor(QPalette.ColorRole.ToolTipText, QColor(0, 0, 0))
+    return p

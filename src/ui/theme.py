@@ -72,9 +72,6 @@ def _apply_windows_titlebar_theme(dark: bool) -> None:
         app.installEventFilter(_titlebar_filter)
     else:
         _titlebar_filter.set_dark(dark)  # type: ignore[attr-defined]
-    # Defer the DWM calls to the next event-loop tick so that any Win32 messages
-    # posted by _force_qt_refresh (app.setStyle → SetWindowPos(SWP_FRAMECHANGED))
-    # are processed first — otherwise they can reset the non-client area after us.
     def _apply_all() -> None:
         a = QApplication.instance()
         if a is None:
@@ -84,16 +81,15 @@ def _apply_windows_titlebar_theme(dark: bool) -> None:
                 hwnd = w.internalWinId()
                 if hwnd:
                     _dwm_set_titlebar_dark(int(hwnd), dark)
-                # All soft triggers (SWP_FRAMECHANGED, WM_NCACTIVATE,
-                # WM_THEMECHANGED, widget.update) fail because DWM does not
-                # invalidate its cached composition surface without a real size
-                # change.  A 1 px width nudge forces DWM to allocate a new
-                # surface and render it with the current dark-mode attribute.
-                # Both SetWindowPos calls fire before the next vsync so the
-                # transient width is never painted on screen.
+                # DWM only re-reads DWMWA_USE_IMMERSIVE_DARK_MODE when it
+                # allocates a new composition surface, which happens on resize.
+                # A 1 px nudge forces that without any visible flicker: both
+                # SetWindowPos calls complete before the next vsync (≤16 ms).
                 _w = w.width()
                 w.resize(_w + 1, w.height())
                 w.resize(_w, w.height())
+    # Defer to the next event-loop tick so Qt's own style-change messages from
+    # _force_qt_refresh are processed before we touch the non-client area.
     QTimer.singleShot(0, _apply_all)
 
 

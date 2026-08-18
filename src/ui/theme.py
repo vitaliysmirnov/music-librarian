@@ -36,6 +36,16 @@ def _dwm_set_titlebar_dark(hwnd: int, dark: bool) -> None:
             color = ctypes.c_uint(_DARK_CAPTION_COLOR if dark else _DWMWA_COLOR_DEFAULT)
             ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(color), ctypes.sizeof(color))
 
+        # SetWindowTheme causes Windows to send WM_THEMECHANGED to the window,
+        # which makes DWM immediately repaint the non-client area and pick up
+        # the DWMWA_USE_IMMERSIVE_DARK_MODE attribute set above.  The other
+        # approaches (SWP_FRAMECHANGED, WM_NCACTIVATE, widget.update) all fail
+        # because DWM reuses its cached composition surface without a theme change.
+        ctypes.windll.uxtheme.SetWindowTheme(
+            hwnd,
+            "DarkMode_Explorer" if dark else "",
+            None,
+        )
     except Exception:
         pass
 
@@ -84,11 +94,6 @@ def _apply_windows_titlebar_theme(dark: bool) -> None:
                 hwnd = w.internalWinId()
                 if hwnd:
                     _dwm_set_titlebar_dark(int(hwnd), dark)
-                # Repainting the client area causes DWM to recompose the entire
-                # window frame (client + non-client) with the new dark attribute.
-                # Without this, DWM reuses its cached composition buffer and the
-                # title bar stays the old colour until the next size change.
-                w.update()
     QTimer.singleShot(0, _apply_all)
 
 

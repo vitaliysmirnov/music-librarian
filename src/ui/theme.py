@@ -9,18 +9,34 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 _titlebar_filter: "QObject | None" = None
 
+# Matches the app's dark Window palette colour (QColor(45, 45, 45) = #2D2D2D).
+# COLORREF format is 0x00BBGGRR; for a neutral gray R=G=B so the value is the same.
+_DARK_CAPTION_COLOR = 0x2D2D2D
+_DWMWA_COLOR_DEFAULT = 0xFFFFFFFF  # sentinel that resets caption colour to system default
+
+try:
+    import sys as _sys
+    _IS_WIN11 = _sys.platform == "win32" and _sys.getwindowsversion().build >= 22000
+except Exception:
+    _IS_WIN11 = False
+
 
 def _dwm_set_titlebar_dark(hwnd: int, dark: bool) -> None:
-    """Call DwmSetWindowAttribute to flip the native title bar to dark/light."""
+    """Apply dark or light title bar via DWM attributes."""
     import ctypes
-    value = ctypes.c_int(1 if dark else 0)
-    size = ctypes.sizeof(value)
     try:
-        # Attribute 20: Windows 10 Build 19041 (20H1) and Windows 11
-        r = ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(value), size)
+        # Always set DWMWA_USE_IMMERSIVE_DARK_MODE so the system-drawn
+        # min/max/close buttons and the non-client border use the dark style.
+        mode = ctypes.c_int(1 if dark else 0)
+        r = ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(mode), ctypes.sizeof(mode))
         if r != 0:
-            # Attribute 19: Windows 10 Build 18362–19040
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(value), size)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(mode), ctypes.sizeof(mode))
+
+        if _IS_WIN11:
+            # DWMWA_CAPTION_COLOR (attr 35, Win 11+): set a softer gray
+            # matching the app palette rather than the near-black system default.
+            color = ctypes.c_uint(_DARK_CAPTION_COLOR if dark else _DWMWA_COLOR_DEFAULT)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(color), ctypes.sizeof(color))
     except Exception:
         pass
 

@@ -25,18 +25,22 @@ def _dwm_set_titlebar_dark(hwnd: int, dark: bool) -> None:
     """Apply dark or light title bar via DWM attributes."""
     import ctypes
     try:
-        # Always set DWMWA_USE_IMMERSIVE_DARK_MODE so the system-drawn
-        # min/max/close buttons and the non-client border use the dark style.
+        # DWMWA_USE_IMMERSIVE_DARK_MODE — dark min/max/close buttons and border.
         mode = ctypes.c_int(1 if dark else 0)
         r = ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(mode), ctypes.sizeof(mode))
         if r != 0:
             ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(mode), ctypes.sizeof(mode))
 
         if _IS_WIN11:
-            # DWMWA_CAPTION_COLOR (attr 35, Win 11+): set a softer gray
-            # matching the app palette rather than the near-black system default.
+            # DWMWA_CAPTION_COLOR (attr 35, Win 11+): softer gray matching the app palette.
             color = ctypes.c_uint(_DARK_CAPTION_COLOR if dark else _DWMWA_COLOR_DEFAULT)
             ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(color), ctypes.sizeof(color))
+
+        # DwmSetWindowAttribute does not automatically repaint the non-client area
+        # at runtime.  SWP_FRAMECHANGED triggers WM_NCCALCSIZE which forces DWM
+        # to immediately redraw the title bar with the new attribute values.
+        _SWP = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020  # NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|FRAMECHANGED
+        ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, _SWP)
     except Exception:
         pass
 

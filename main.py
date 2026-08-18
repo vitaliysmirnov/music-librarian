@@ -56,13 +56,15 @@ def main():
         app.setApplicationDisplayName("Music Librarian")
     app.setOrganizationName("music-librarian")
 
-    # In a macOS bundle the dock icon comes from .icns automatically;
-    # calling setWindowIcon would override it with a raw PNG that macOS
-    # renders at the wrong logical size.  When running from source
-    # (PyCharm, terminal) sys.frozen is not set, so we still set the icon.
-    _in_bundle = sys.platform == "darwin" and getattr(sys, "frozen", False)
-    if not _in_bundle:
-        icon_path = Path(__file__).parent / "assets" / "icon.png"
+    # macOS bundle: dock icon comes from .icns in the bundle automatically.
+    # Windows frozen build: assets/ is extracted next to the EXE; use .ico so
+    # Qt picks up all the embedded sizes (16, 32, 48, 256…).
+    # Dev / source run: load icon.png from the source tree.
+    if not (sys.platform == "darwin" and getattr(sys, "frozen", False)):
+        if getattr(sys, "frozen", False):
+            icon_path = Path(sys.executable).parent / "assets" / "icon.ico"
+        else:
+            icon_path = Path(__file__).parent / "assets" / "icon.png"
         if icon_path.exists():
             app.setWindowIcon(QIcon(str(icon_path)))
 

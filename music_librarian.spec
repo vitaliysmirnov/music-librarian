@@ -11,7 +11,9 @@ a = Analysis(
     ["main.py"],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[
+        ("assets/icon.ico", "assets"),
+    ],
     hiddenimports=[
         "certifi",
         "PySide6.QtMultimedia",

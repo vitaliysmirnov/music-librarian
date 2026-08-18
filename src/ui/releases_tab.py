@@ -754,7 +754,7 @@ class _ReleasesView(QWidget):
             self._expanded.clear()
             self.refresh()
 
-    def _select_src_row(self, src_row: int) -> None:
+    def _select_src_row(self, src_row: int, scroll: bool = True) -> None:
         src_idx   = self._model.index(src_row, 0)
         proxy_idx = self._proxy.mapFromSource(src_idx)
         if proxy_idx.isValid():
@@ -763,9 +763,11 @@ class _ReleasesView(QWidget):
                 self._table.selectionModel().SelectionFlag.ClearAndSelect |
                 self._table.selectionModel().SelectionFlag.Rows,
             )
-            self._table.scrollTo(proxy_idx, QAbstractItemView.ScrollHint.PositionAtCenter)
+            if scroll:
+                self._table.scrollTo(proxy_idx, QAbstractItemView.ScrollHint.PositionAtCenter)
 
-    def select_release(self, folder_path: str, allow_expand: bool = True) -> None:
+    def select_release(self, folder_path: str, allow_expand: bool = True,
+                       scroll: bool = True) -> None:
         # Direct match — regular releases, already-expanded disc children, or multi-disc parents.
         for src_row, row in enumerate(self._model._rows):
             if row.get("folder_path") == folder_path:
@@ -776,10 +778,10 @@ class _ReleasesView(QWidget):
                     self.refresh()
                     for src_row2, row2 in enumerate(self._model._rows):
                         if row2.get("folder_path") == folder_path:
-                            self._select_src_row(src_row2)
+                            self._select_src_row(src_row2, scroll=scroll)
                             return
                     return
-                self._select_src_row(src_row)
+                self._select_src_row(src_row, scroll=scroll)
                 return
 
         # Not found — folder_path is a disc child inside a collapsed multi-disc parent.
@@ -795,7 +797,7 @@ class _ReleasesView(QWidget):
                 self.refresh()
                 for src_row2, row2 in enumerate(self._model._rows):
                     if row2.get("folder_path") == folder_path:
-                        self._select_src_row(src_row2)
+                        self._select_src_row(src_row2, scroll=scroll)
                         return
                 break
 
@@ -1040,8 +1042,8 @@ class _ReleasesView(QWidget):
             self._expanded.discard(folder_path)
         else:
             self._expanded.add(folder_path)
-        self.refresh()
-        QTimer.singleShot(0, lambda: self.select_release(folder_path, allow_expand=False))
+        self.refresh(_restore_scroll=False)
+        QTimer.singleShot(0, lambda: self.select_release(folder_path, allow_expand=False, scroll=False))
 
     # ── Release actions ────────────────────────────────────────────────────────
 
@@ -1222,7 +1224,8 @@ class _ReleasesView(QWidget):
 
     # ── Data ──────────────────────────────────────────────────────────────────
 
-    def refresh(self, token_order: list | None = None, extra_tokens: list | None = None):
+    def refresh(self, token_order: list | None = None, extra_tokens: list | None = None,
+                _restore_scroll: bool = True):
         if token_order is None:
             mask = self._db.get_setting("folder_mask", DEFAULT_MASK)
             token_order  = _known_token_order(mask)
@@ -1265,7 +1268,7 @@ class _ReleasesView(QWidget):
         self._count_label.setText(self._count_label_fn(len(top_rows)))
 
         if selected_path:
-            self.select_release(selected_path, allow_expand=False)
+            self.select_release(selected_path, allow_expand=False, scroll=_restore_scroll)
 
 
 class ReleasesTab(QWidget):

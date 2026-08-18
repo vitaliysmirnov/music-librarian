@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QByteArray, QEvent, QMimeData, QPoint, QUrl, Signal
-from PySide6.QtGui import QDrag, QFont, QKeySequence, QShortcut
+from PySide6.QtGui import QDrag, QFont, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -156,8 +156,10 @@ class TracklistPopup(QDialog):
         if not mono.exactMatch():
             mono = QFont("Courier New")
         mono.setPointSize(11)
+        fm = QFontMetrics(mono)
 
         self._like_buttons: list[QPushButton] = []
+        max_row_w = 0  # widest row text in pixels — used to size the dialog correctly
 
         for i, (path, (track_artist, track_title, ms)) in enumerate(
             zip(self._paths, self._tracks), 1
@@ -167,16 +169,23 @@ class TracklistPopup(QDialog):
             self._lw.addItem(item)
 
             row_w = QWidget()
-            row_w.setStyleSheet("background: transparent;")
+            # setAutoFillBackground(False) makes the widget transparent without
+            # setting background:transparent in the stylesheet; the latter causes
+            # tooltip popups to render as a black rectangle on Windows.
+            row_w.setAutoFillBackground(False)
             rl = QHBoxLayout(row_w)
             rl.setContentsMargins(4, 0, 4, 0)
             rl.setSpacing(0)
 
             art = _trunc(track_artist, _MAX_ARTIST).ljust(_MAX_ARTIST)
             ttl = _trunc(track_title,  _MAX_TITLE).ljust(_MAX_TITLE)
-            info_lbl = QLabel(f"{i:>2}  {art} - {ttl}  {_fmt_ms(ms)}")
+            label_text = f"{i:>2}  {art} - {ttl}  {_fmt_ms(ms)}"
+            info_lbl = QLabel(label_text)
             info_lbl.setFont(mono)
-            info_lbl.setStyleSheet("background: transparent; border: none; padding: 1px 0;")
+            info_lbl.setStyleSheet("border: none; padding: 1px 0;")
+            if len(track_artist) > _MAX_ARTIST or len(track_title) > _MAX_TITLE:
+                info_lbl.setToolTip(f"{track_artist} — {track_title}")
+            max_row_w = max(max_row_w, fm.horizontalAdvance(label_text))
 
             like_btn = QPushButton()
             like_btn.setCheckable(True)
@@ -236,7 +245,10 @@ class TracklistPopup(QDialog):
 
         visible = min(max(len(self._tracks), 1), 20)
         self._lw.setFixedHeight(visible * _ROW_H + 6)
-        self._lw.setMinimumWidth(640)
+        # Base width on actual rendered text width so Courier New on Windows
+        # (wider than Menlo on macOS) never clips content.
+        # +40: like button (20px) + margins (8px) + scrollbar gap (12px)
+        self._lw.setMinimumWidth(max(560, max_row_w + 40))
 
         layout.addWidget(self._lw)
         self.adjustSize()

@@ -8,7 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QEvent, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QFont, QMouseEvent, QPalette
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
+    QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QSlider, QStyle, QVBoxLayout, QWidget,
 )
 
 from src.ui.player_engine import PlayerEngine
@@ -202,6 +202,25 @@ PlayerBar QPushButton#btn_shuffle:checked:hover     { background: rgba(128,128,1
 
 
 
+class _SeekSlider(QSlider):
+    """QSlider that jumps to the exact clicked position on left-click.
+
+    Qt's Fusion style on Windows does not set SH_Slider_AbsoluteSetButtons, so
+    clicking the groove page-steps rather than jumping to the clicked position.
+    Override mousePressEvent to calculate the exact value before Qt processes
+    the event, ensuring seek always lands where the user clicked.
+    """
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            val = QStyle.sliderValueFromPosition(
+                self.minimum(), self.maximum(),
+                int(event.position().x()),
+                self.width(),
+            )
+            self.setValue(val)
+        super().mousePressEvent(event)
+
+
 class PlayerBar(QWidget):
     queue_toggled           = Signal()
     navigate_requested      = Signal(str, str)   # kind, value
@@ -319,7 +338,7 @@ class PlayerBar(QWidget):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
 
-        self._progress = QSlider(Qt.Orientation.Horizontal)
+        self._progress = _SeekSlider(Qt.Orientation.Horizontal)
         self._progress.setObjectName("progress_slider")
         self._progress.setRange(0, 1000)
         self._progress.setValue(0)

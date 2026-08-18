@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QByteArray, QEvent, QMimeData, QPoint, QSize, QUrl, Signal
-from PySide6.QtGui import QCursor, QDrag, QFont, QFontMetrics, QKeySequence, QShortcut
+from PySide6.QtGui import QCursor, QDrag, QFont, QFontMetrics, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -32,16 +32,15 @@ def _trunc(s: str, n: int) -> str:
 
 
 class _ElidedLabel(QLabel):
-    """QLabel that elides its text with '…' when the widget is narrower than the full text.
+    """QLabel that elides its text with '…' when narrower than the full text.
 
-    sizeHint() always reports the full-text width so the layout can allocate the right
-    preferred space; minimumSizeHint() reports zero so the label can shrink freely.
-    setText() is called from resizeEvent() with the correctly elided string — because
-    sizeHint() is always constant, no recursive layout loop can occur.
+    Elision is computed in paintEvent using the widget's actual width at draw time,
+    so it is immune to the QListWidget item-geometry timer race on Windows where
+    WM_PAINT can arrive before the delayed doItemsLayout() timer fires.
     """
 
     def __init__(self, text: str, parent=None):
-        super().__init__(text, parent)
+        super().__init__(parent)
         self._full_text = text
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumWidth(0)
@@ -53,24 +52,15 @@ class _ElidedLabel(QLabel):
     def minimumSizeHint(self):
         return QSize(0, super().minimumSizeHint().height())
 
-    def _update_text(self):
-        if self.width() > 0:
-            elided = self.fontMetrics().elidedText(
-                self._full_text, Qt.TextElideMode.ElideRight, self.width()
-            )
-            # super().setText avoids triggering QLabel's own sizeHint invalidation path
-            super().setText(elided)
-
-    def showEvent(self, event):
-        # resizeEvent may not have fired yet with the final geometry when the widget
-        # is first shown (item widgets inside QListWidget get their geometry set
-        # during the view's layout pass, which happens at show time).
-        super().showEvent(event)
-        self._update_text()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._update_text()
+    def paintEvent(self, event):
+        w = self.width()
+        if w <= 0:
+            return
+        painter = QPainter(self)
+        elided = self.fontMetrics().elidedText(self._full_text, Qt.TextElideMode.ElideRight, w)
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.setFont(self.font())
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
 
 
 def _confirm_add_duplicates(parent, duplicates: list) -> bool:
@@ -328,12 +318,6 @@ class TracklistPopup(QDialog):
         self.adjustSize()
         if self.width() < needed_w:
             self.resize(needed_w, self.height())
-        # resize() queues a layout event; activate() flushes it synchronously so
-        # QListWidget gets its final width before show() is called.  doItemsLayout()
-        # then forces the view to set correct geometries on all item widgets, which
-        # triggers _ElidedLabel.resizeEvent() (and _update_text()) before first paint.
-        self.layout().activate()
-        self._lw.doItemsLayout()
         self.setMinimumSize(self.width(), self.height())
 
     def sync_like(self, path: str, liked: bool) -> None:

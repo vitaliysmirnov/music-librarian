@@ -78,10 +78,11 @@ def _apply_palette(theme: str, app: QApplication) -> None:
     else:  # system — follow OS dark/light preference
         is_dark = _system_is_dark(app)
         app.setPalette(_dark_palette() if is_dark else _light_palette())
-    # Explicit QToolTip style prevents the black-rectangle rendering artefact
-    # that appears on Windows when widgets have background:transparent.
-    app.setStyleSheet(_TOOLTIP_STYLE_DARK if is_dark else _TOOLTIP_STYLE_LIGHT)
+    # Call _force_qt_refresh() first: it calls app.setStyle() internally which can
+    # reset the application stylesheet.  Setting the QToolTip stylesheet afterwards
+    # ensures it survives the style re-creation.
     _force_qt_refresh()
+    app.setStyleSheet(_TOOLTIP_STYLE_DARK if is_dark else _TOOLTIP_STYLE_LIGHT)
 
 
 def _dark_palette() -> QPalette:

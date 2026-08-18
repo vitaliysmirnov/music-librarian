@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QByteArray, QEvent, QMimeData, QPoint, QUrl, Signal
+from PySide6.QtCore import Qt, QByteArray, QEvent, QMimeData, QPoint, QSize, QUrl, Signal
 from PySide6.QtGui import QCursor, QDrag, QFont, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QToolTip,
     QVBoxLayout,
     QWidget,
@@ -23,14 +24,43 @@ from src.ui.player_engine import _audio_paths, _duration_from_file, _read_track_
 from src.utils import fmt_ms as _fmt_ms
 from src.utils.cue import find_cue_for_folder, parse_cue
 
-_MAX_ARTIST = 20
-_MAX_TITLE  = 33
-
 _ROW_H = 22
 
 
 def _trunc(s: str, n: int) -> str:
     return s if len(s) <= n else s[:n - 1] + "…"
+
+
+class _ElidedLabel(QLabel):
+    """QLabel that elides its text with '…' when the widget is narrower than the full text.
+
+    sizeHint() always reports the full-text width so the layout can allocate the right
+    preferred space; minimumSizeHint() reports zero so the label can shrink freely.
+    setText() is called from resizeEvent() with the correctly elided string — because
+    sizeHint() is always constant, no recursive layout loop can occur.
+    """
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
+        self._full_text = text
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(0)
+
+    def sizeHint(self):
+        fm = self.fontMetrics()
+        return QSize(fm.horizontalAdvance(self._full_text), super().sizeHint().height())
+
+    def minimumSizeHint(self):
+        return QSize(0, super().minimumSizeHint().height())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.width() > 0:
+            elided = self.fontMetrics().elidedText(
+                self._full_text, Qt.TextElideMode.ElideRight, self.width()
+            )
+            # super().setText avoids triggering QLabel's own sizeHint invalidation path
+            super().setText(elided)
 
 
 def _confirm_add_duplicates(parent, duplicates: list) -> bool:
@@ -160,8 +190,16 @@ class TracklistPopup(QDialog):
         fm = QFontMetrics(mono)
 
         self._like_buttons: list[QPushButton] = []
-        self._tooltips: dict[int, str] = {}  # row → full "artist — title" for truncated rows
-        max_row_w = 0  # widest row text in pixels — used to size the dialog correctly
+        # Maps each _ElidedLabel → its full (un-elided) text so the eventFilter can
+        # show a tooltip via QToolTip.showText() when text is actually clipped.
+        self._label_tooltips: dict = {}
+        max_artist_w = 0  # widest artist name in pixels
+        max_title_w  = 0  # widest title name in pixels
+
+        # Fixed-width column sizes based on the actual monospace font.
+        num_w = fm.horizontalAdvance(f"{len(self._tracks):>2}  ")
+        sep_w = fm.horizontalAdvance(" - ")
+        dur_w = fm.horizontalAdvance("  99:99")
 
         for i, (path, (track_artist, track_title, ms)) in enumerate(
             zip(self._paths, self._tracks), 1
@@ -171,27 +209,39 @@ class TracklistPopup(QDialog):
             self._lw.addItem(item)
 
             row_w = QWidget()
-            # setAutoFillBackground(False) makes the widget transparent without
-            # setting background:transparent in the stylesheet; the latter causes
-            # tooltip popups to render as a black rectangle on Windows.
             row_w.setAutoFillBackground(False)
             rl = QHBoxLayout(row_w)
             rl.setContentsMargins(4, 0, 4, 0)
             rl.setSpacing(0)
 
-            art = _trunc(track_artist, _MAX_ARTIST).ljust(_MAX_ARTIST)
-            ttl = _trunc(track_title,  _MAX_TITLE).ljust(_MAX_TITLE)
-            label_text = f"{i:>2}  {art} - {ttl}  {_fmt_ms(ms)}"
-            info_lbl = QLabel(label_text)
-            info_lbl.setFont(mono)
-            info_lbl.setStyleSheet("border: none; padding: 1px 0;")
-            if len(track_artist) > _MAX_ARTIST or len(track_title) > _MAX_TITLE:
-                # Don't call setToolTip() here — on Windows, widget-level tooltips
-                # inside a QListWidget custom item widget bypass the stylesheet and
-                # render with a black background.  Instead we intercept the propagated
-                # ToolTip event in the viewport eventFilter and use QToolTip.showText().
-                self._tooltips[i - 1] = f"{track_artist} — {track_title}"
-            max_row_w = max(max_row_w, fm.horizontalAdvance(label_text))
+            # Track number (fixed width, right-aligned)
+            num_lbl = QLabel(f"{i:>2} ")
+            num_lbl.setFont(mono)
+            num_lbl.setFixedWidth(num_w)
+            num_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+            # Artist — elides when the dialog is narrow, full text via tooltip
+            art_lbl = _ElidedLabel(track_artist)
+            art_lbl.setFont(mono)
+            art_lbl.installEventFilter(self)
+            self._label_tooltips[art_lbl] = track_artist
+
+            # Separator
+            sep_lbl = QLabel(" - ")
+            sep_lbl.setFont(mono)
+            sep_lbl.setFixedWidth(sep_w)
+
+            # Title — same adaptive behaviour as artist
+            ttl_lbl = _ElidedLabel(track_title)
+            ttl_lbl.setFont(mono)
+            ttl_lbl.installEventFilter(self)
+            self._label_tooltips[ttl_lbl] = track_title
+
+            # Duration (fixed width, right-aligned)
+            dur_lbl = QLabel(f"  {_fmt_ms(ms)}")
+            dur_lbl.setFont(mono)
+            dur_lbl.setFixedWidth(dur_w)
+            dur_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
             like_btn = QPushButton()
             like_btn.setCheckable(True)
@@ -209,8 +259,6 @@ class TracklistPopup(QDialog):
             is_liked = db is not None and db.is_track_liked(path, track_start_ms)
             like_btn.setText("♥" if is_liked else "♡")
             like_btn.setChecked(is_liked)
-            # Tooltip omitted: widget-level tooltips on buttons with
-            # background:transparent render as black rectangles on Windows.
 
             def _make_toggle(p, idx_=i - 1, artist_=track_artist, title_=track_title,
                               dur_=ms, btn=like_btn):
@@ -232,9 +280,16 @@ class TracklistPopup(QDialog):
             like_btn.toggled.connect(_make_toggle(path))
             self._like_buttons.append(like_btn)
 
-            rl.addWidget(info_lbl, 1)
+            rl.addWidget(num_lbl)
+            rl.addWidget(art_lbl, 1)
+            rl.addWidget(sep_lbl)
+            rl.addWidget(ttl_lbl, 1)
+            rl.addWidget(dur_lbl)
             rl.addWidget(like_btn)
             self._lw.setItemWidget(item, row_w)
+
+            max_artist_w = max(max_artist_w, fm.horizontalAdvance(track_artist))
+            max_title_w  = max(max_title_w,  fm.horizontalAdvance(track_title))
 
         if not self._tracks:
             item = QListWidgetItem("  No audio files found")
@@ -254,13 +309,13 @@ class TracklistPopup(QDialog):
         self._lw.setFixedHeight(visible * _ROW_H + 6)
 
         layout.addWidget(self._lw)
-        # QListWidget.sizeHint() ignores setMinimumWidth when items use custom
-        # widgets, so adjustSize() alone produces a narrow dialog.  Resize the
-        # dialog explicitly after adjustSize() to guarantee the full text fits:
-        # +80 covers like-btn (20) + row margins (8) + scrollbar (15-17 on
-        # Windows Fusion) + breathing room so text is never clipped.
+        # Compute preferred width from actual pixel widths of all track names.
+        # Fixed overhead: num + sep + dur + like-btn + row margins + scrollbar + safety.
+        fixed_overhead = num_w + sep_w + dur_w + 20 + 8 + 17 + 40
+        needed_w = max(560, min(900, fixed_overhead + max_artist_w + max_title_w))
+        # adjustSize() under-estimates width (QListWidget.sizeHint ignores custom item
+        # widget widths); resize the dialog explicitly afterwards.
         self.adjustSize()
-        needed_w = max(560, max_row_w + 80)
         if self.width() < needed_w:
             self.resize(needed_w, self.height())
         self.setMinimumSize(self.width(), self.height())
@@ -291,6 +346,19 @@ class TracklistPopup(QDialog):
             btn.blockSignals(False)
 
     def eventFilter(self, obj, event):
+        # Per-label tooltip: intercept ToolTip events on _ElidedLabel widgets before
+        # they reach Qt's default tooltip path.  QToolTip.showText() always uses Qt's
+        # own renderer (QTipLabel), which respects the app-level QToolTip stylesheet
+        # set in theme.py — bypassing the native Windows tooltip that ignores it and
+        # renders with a black background when the parent widget has any stylesheet.
+        if event.type() == QEvent.Type.ToolTip and obj in self._label_tooltips:
+            full_text = self._label_tooltips[obj]
+            if obj.fontMetrics().horizontalAdvance(full_text) > obj.width():
+                QToolTip.showText(QCursor.pos(), full_text, obj)
+            else:
+                QToolTip.hideText()
+            return True
+
         if obj is self._lw.viewport():
             t = event.type()
             if t == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
@@ -304,22 +372,6 @@ class TracklistPopup(QDialog):
                         return True
             elif t == QEvent.Type.MouseButtonRelease:
                 self._drag_start_pos = None
-            elif t == QEvent.Type.ToolTip:
-                # Tooltip events from child widgets (info_lbl, like_btn) propagate
-                # here because those widgets have no toolTip set.  Using
-                # QToolTip.showText() bypasses the widget-level tooltip mechanism
-                # that renders as a black rectangle on Windows (Fusion + custom items).
-                vp = self._lw.viewport()
-                global_pos = QCursor.pos()
-                local_pos = vp.mapFromGlobal(global_pos)
-                idx = self._lw.indexAt(local_pos)
-                if idx.isValid():
-                    tip = self._tooltips.get(idx.row(), "")
-                    if tip:
-                        QToolTip.showText(global_pos, tip, vp)
-                        return True
-                QToolTip.hideText()
-                return True
         return super().eventFilter(obj, event)
 
     def _exec_drag(self, press_pos: QPoint):

@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QByteArray, QEvent, QMimeData, QPoint, QRect, QSize, QTimer, QUrl, Signal
-from PySide6.QtGui import QCursor, QDrag, QFont, QFontMetrics, QKeySequence, QPainter, QShortcut
+from PySide6.QtCore import Qt, QByteArray, QEvent, QMimeData, QPoint, QUrl, Signal
+from PySide6.QtGui import QDrag, QFont, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -14,8 +14,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
-    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -24,43 +22,14 @@ from src.ui.player_engine import _audio_paths, _duration_from_file, _read_track_
 from src.utils import fmt_ms as _fmt_ms
 from src.utils.cue import find_cue_for_folder, parse_cue
 
+_MAX_ARTIST = 20
+_MAX_TITLE  = 33
+
 _ROW_H = 22
 
 
 def _trunc(s: str, n: int) -> str:
     return s if len(s) <= n else s[:n - 1] + "…"
-
-
-class _ElidedLabel(QLabel):
-    """QLabel that elides its text with '…' when narrower than the full text.
-
-    Elision is computed in paintEvent using the widget's actual width at draw time,
-    so it is immune to the QListWidget item-geometry timer race on Windows where
-    WM_PAINT can arrive before the delayed doItemsLayout() timer fires.
-    """
-
-    def __init__(self, text: str, parent=None):
-        super().__init__(parent)
-        self._full_text = text
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setMinimumWidth(0)
-
-    def sizeHint(self):
-        fm = self.fontMetrics()
-        return QSize(fm.horizontalAdvance(self._full_text), super().sizeHint().height())
-
-    def minimumSizeHint(self):
-        return QSize(0, super().minimumSizeHint().height())
-
-    def paintEvent(self, event):
-        w = self.width()
-        if w <= 0:
-            return
-        painter = QPainter(self)
-        elided = self.fontMetrics().elidedText(self._full_text, Qt.TextElideMode.ElideRight, w)
-        painter.setPen(self.palette().color(self.foregroundRole()))
-        painter.setFont(self.font())
-        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
 
 
 def _confirm_add_duplicates(parent, duplicates: list) -> bool:
@@ -190,16 +159,7 @@ class TracklistPopup(QDialog):
         fm = QFontMetrics(mono)
 
         self._like_buttons: list[QPushButton] = []
-        # Maps each _ElidedLabel → its full (un-elided) text so the eventFilter can
-        # show a tooltip via QToolTip.showText() when text is actually clipped.
-        self._label_tooltips: dict = {}
-        max_artist_w = 0  # widest artist name in pixels
-        max_title_w  = 0  # widest title name in pixels
-
-        # Fixed-width column sizes based on the actual monospace font.
-        num_w = fm.horizontalAdvance(f"{len(self._tracks):>2}  ")
-        sep_w = fm.horizontalAdvance(" - ")
-        dur_w = fm.horizontalAdvance("  99:99")
+        max_row_w = 0  # widest row text in pixels — used to size the dialog correctly
 
         for i, (path, (track_artist, track_title, ms)) in enumerate(
             zip(self._paths, self._tracks), 1
@@ -209,39 +169,23 @@ class TracklistPopup(QDialog):
             self._lw.addItem(item)
 
             row_w = QWidget()
+            # setAutoFillBackground(False) makes the widget transparent without
+            # setting background:transparent in the stylesheet; the latter causes
+            # tooltip popups to render as a black rectangle on Windows.
             row_w.setAutoFillBackground(False)
             rl = QHBoxLayout(row_w)
             rl.setContentsMargins(4, 0, 4, 0)
             rl.setSpacing(0)
 
-            # Track number (fixed width, right-aligned)
-            num_lbl = QLabel(f"{i:>2} ")
-            num_lbl.setFont(mono)
-            num_lbl.setFixedWidth(num_w)
-            num_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-            # Artist — elides when the dialog is narrow, full text via tooltip
-            art_lbl = _ElidedLabel(track_artist)
-            art_lbl.setFont(mono)
-            art_lbl.installEventFilter(self)
-            self._label_tooltips[art_lbl] = track_artist
-
-            # Separator
-            sep_lbl = QLabel(" - ")
-            sep_lbl.setFont(mono)
-            sep_lbl.setFixedWidth(sep_w)
-
-            # Title — same adaptive behaviour as artist
-            ttl_lbl = _ElidedLabel(track_title)
-            ttl_lbl.setFont(mono)
-            ttl_lbl.installEventFilter(self)
-            self._label_tooltips[ttl_lbl] = track_title
-
-            # Duration (fixed width, right-aligned)
-            dur_lbl = QLabel(f"  {_fmt_ms(ms)}")
-            dur_lbl.setFont(mono)
-            dur_lbl.setFixedWidth(dur_w)
-            dur_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            art = _trunc(track_artist, _MAX_ARTIST).ljust(_MAX_ARTIST)
+            ttl = _trunc(track_title,  _MAX_TITLE).ljust(_MAX_TITLE)
+            label_text = f"{i:>2}  {art} - {ttl}  {_fmt_ms(ms)}"
+            info_lbl = QLabel(label_text)
+            info_lbl.setFont(mono)
+            info_lbl.setStyleSheet("border: none; padding: 1px 0;")
+            if len(track_artist) > _MAX_ARTIST or len(track_title) > _MAX_TITLE:
+                info_lbl.setToolTip(f"{track_artist} — {track_title}")
+            max_row_w = max(max_row_w, fm.horizontalAdvance(label_text))
 
             like_btn = QPushButton()
             like_btn.setCheckable(True)
@@ -259,6 +203,7 @@ class TracklistPopup(QDialog):
             is_liked = db is not None and db.is_track_liked(path, track_start_ms)
             like_btn.setText("♥" if is_liked else "♡")
             like_btn.setChecked(is_liked)
+            like_btn.setToolTip("Like / Unlike")
 
             def _make_toggle(p, idx_=i - 1, artist_=track_artist, title_=track_title,
                               dur_=ms, btn=like_btn):
@@ -280,16 +225,9 @@ class TracklistPopup(QDialog):
             like_btn.toggled.connect(_make_toggle(path))
             self._like_buttons.append(like_btn)
 
-            rl.addWidget(num_lbl)
-            rl.addWidget(art_lbl, 1)
-            rl.addWidget(sep_lbl)
-            rl.addWidget(ttl_lbl, 1)
-            rl.addWidget(dur_lbl)
+            rl.addWidget(info_lbl, 1)
             rl.addWidget(like_btn)
             self._lw.setItemWidget(item, row_w)
-
-            max_artist_w = max(max_artist_w, fm.horizontalAdvance(track_artist))
-            max_title_w  = max(max_title_w,  fm.horizontalAdvance(track_title))
 
         if not self._tracks:
             item = QListWidgetItem("  No audio files found")
@@ -307,41 +245,14 @@ class TracklistPopup(QDialog):
 
         visible = min(max(len(self._tracks), 1), 20)
         self._lw.setFixedHeight(visible * _ROW_H + 6)
+        # Base width on actual rendered text width so Courier New on Windows
+        # (wider than Menlo on macOS) never clips content.
+        # +40: like button (20px) + margins (8px) + scrollbar gap (12px)
+        self._lw.setMinimumWidth(max(560, max_row_w + 40))
 
         layout.addWidget(self._lw)
-        # Compute preferred width from actual pixel widths of all track names.
-        # Fixed overhead: num + sep + dur + like-btn + row margins + scrollbar + safety.
-        fixed_overhead = num_w + sep_w + dur_w + 20 + 8 + 17 + 40
-        needed_w = max(560, min(900, fixed_overhead + max_artist_w + max_title_w))
-        # adjustSize() under-estimates width (QListWidget.sizeHint ignores custom item
-        # widget widths); resize the dialog explicitly afterwards.
         self.adjustSize()
-        if self.width() < needed_w:
-            self.resize(needed_w, self.height())
-        # The doItemsLayout() timer started by setItemWidget() calls reads the
-        # viewport width when it fires -- which may be before the dialog layout
-        # has applied _lw's correct width.  Pre-sizing _lw here ensures the timer
-        # sees the right viewport width whenever it fires.
-        self._lw.resize(needed_w, self._lw.height())
-        self.setMinimumSize(self.width(), self.height())
-
-    def showEvent(self, event: QEvent) -> None:
-        super().showEvent(event)
-        # By the time this 0-ms timer fires the dialog layout has activated and
-        # _lw.viewport() has its final width.  Directly set each item widget's
-        # geometry (the same calculation Qt uses in updateEditorGeometries on
-        # resize) so the first visible frame is already correct on Windows.
-        QTimer.singleShot(0, self._fix_item_geometry)
-
-    def _fix_item_geometry(self) -> None:
-        vp = self._lw.viewport()
-        w = vp.width()
-        if w <= 0:
-            return
-        for i in range(self._lw.count()):
-            widget = self._lw.itemWidget(self._lw.item(i))
-            if widget is not None:
-                widget.setGeometry(QRect(0, i * _ROW_H, w, _ROW_H))
+        self.setMinimumSize(self.sizeHint())
 
     def sync_like(self, path: str, liked: bool) -> None:
         """Update the like button for *path* without touching the database."""
@@ -369,19 +280,6 @@ class TracklistPopup(QDialog):
             btn.blockSignals(False)
 
     def eventFilter(self, obj, event):
-        # Per-label tooltip: intercept ToolTip events on _ElidedLabel widgets before
-        # they reach Qt's default tooltip path.  QToolTip.showText() always uses Qt's
-        # own renderer (QTipLabel), which respects the app-level QToolTip stylesheet
-        # set in theme.py — bypassing the native Windows tooltip that ignores it and
-        # renders with a black background when the parent widget has any stylesheet.
-        if event.type() == QEvent.Type.ToolTip and obj in self._label_tooltips:
-            full_text = self._label_tooltips[obj]
-            if obj.fontMetrics().horizontalAdvance(full_text) > obj.width():
-                QToolTip.showText(QCursor.pos(), full_text, obj)
-            else:
-                QToolTip.hideText()
-            return True
-
         if obj is self._lw.viewport():
             t = event.type()
             if t == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:

@@ -500,9 +500,11 @@ class MainWindow(QMainWindow):
 
     def _setup_menu(self):
         """Native macOS menu bar with proper roles (About, Preferences, Quit).
-        On other platforms these appear as a regular menu."""
+        On Windows the menu bar is hidden — actions' shortcuts remain active."""
         mb = self.menuBar()
         app_menu = mb.addMenu("Music Librarian")
+        if platform.system() != "Darwin":
+            mb.setVisible(False)
 
         about_act = QAction("About Music Librarian", self)
         about_act.setMenuRole(QAction.MenuRole.AboutRole)

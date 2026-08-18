@@ -42,6 +42,25 @@ QueuePanel QListWidget::item {
 QueuePanel QListWidget::item:selected {
     background: transparent;
 }
+QueuePanel QScrollBar:vertical {
+    background: palette(window);
+    width: 8px;
+    margin: 0;
+}
+QueuePanel QScrollBar::handle:vertical {
+    background: rgba(128, 128, 128, 90);
+    border-radius: 4px;
+    min-height: 20px;
+}
+QueuePanel QScrollBar::add-line:vertical,
+QueuePanel QScrollBar::sub-line:vertical {
+    height: 0;
+    background: none;
+}
+QueuePanel QScrollBar::add-page:vertical,
+QueuePanel QScrollBar::sub-page:vertical {
+    background: none;
+}
 """
 
 _CLEAR_STYLE = """

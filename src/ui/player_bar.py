@@ -5,7 +5,7 @@ import re
 import urllib.parse
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QEvent, Signal
+from PySide6.QtCore import Qt, QEvent, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QFont, QMouseEvent, QPalette
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
@@ -660,9 +660,15 @@ class PlayerBar(QWidget):
         self._seeking = True
 
     def _seek_end(self):
-        self._seeking = False
-        if self._duration_ms > 0:
-            self._engine.seek(int(self._progress.value() / 1000 * self._duration_ms))
+        if self._duration_ms <= 0:
+            self._seeking = False
+            return
+        target_ms = int(self._progress.value() / 1000 * self._duration_ms)
+        self._engine.seek(target_ms)
+        self._elapsed_lbl.setText(_fmt_ms(target_ms))
+        # Keep _seeking=True for 500 ms so the poll timer can't snap the slider
+        # back to a stale WMF position before the seek is processed on Windows.
+        QTimer.singleShot(500, lambda: setattr(self, '_seeking', False))
 
     def _update_enabled(self, enabled: bool):
         for w in (self._btn_prev, self._btn_play, self._btn_next,

@@ -56,17 +56,31 @@ def _system_is_dark(app: QApplication) -> bool:
         return False
 
 
+_TOOLTIP_STYLE_DARK = (
+    "QToolTip { background-color: #323232; color: #dcdcdc;"
+    " border: 1px solid #505050; padding: 2px; }"
+)
+_TOOLTIP_STYLE_LIGHT = (
+    "QToolTip { background-color: #ffffdc; color: #111111;"
+    " border: 1px solid #b4b4b4; padding: 2px; }"
+)
+
+
 def _apply_palette(theme: str, app: QApplication) -> None:
     app.setStyle("Fusion")
+    is_dark: bool
     if theme == "dark":
         app.setPalette(_dark_palette())
+        is_dark = True
     elif theme == "light":
         app.setPalette(_light_palette())
+        is_dark = False
     else:  # system — follow OS dark/light preference
-        if _system_is_dark(app):
-            app.setPalette(_dark_palette())
-        else:
-            app.setPalette(_light_palette())
+        is_dark = _system_is_dark(app)
+        app.setPalette(_dark_palette() if is_dark else _light_palette())
+    # Explicit QToolTip style prevents the black-rectangle rendering artefact
+    # that appears on Windows when widgets have background:transparent.
+    app.setStyleSheet(_TOOLTIP_STYLE_DARK if is_dark else _TOOLTIP_STYLE_LIGHT)
     _force_qt_refresh()
 
 

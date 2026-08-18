@@ -50,7 +50,10 @@ from src.ui.main_window import MainWindow
 def main():
     app = _App(sys.argv)
     app.setApplicationName("Music Librarian")
-    app.setApplicationDisplayName("Music Librarian")
+    # On Windows, applicationDisplayName is appended to every dialog title bar
+    # ("Artist — Title — Music Librarian").  macOS needs it for the Dock & global menu.
+    if sys.platform == "darwin":
+        app.setApplicationDisplayName("Music Librarian")
     app.setOrganizationName("music-librarian")
 
     # In a macOS bundle the dock icon comes from .icns automatically;

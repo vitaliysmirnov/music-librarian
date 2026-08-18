@@ -236,11 +236,11 @@ class TracklistPopup(QDialog):
 
         visible = min(max(len(self._tracks), 1), 20)
         self._lw.setFixedHeight(visible * _ROW_H + 6)
-        self._lw.setMinimumWidth(560)
+        self._lw.setMinimumWidth(640)
 
         layout.addWidget(self._lw)
         self.adjustSize()
-        self.setFixedSize(self.sizeHint())
+        self.setMinimumSize(self.sizeHint())
 
     def sync_like(self, path: str, liked: bool) -> None:
         """Update the like button for *path* without touching the database."""

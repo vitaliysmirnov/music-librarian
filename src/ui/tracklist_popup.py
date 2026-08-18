@@ -318,6 +318,11 @@ class TracklistPopup(QDialog):
         self.adjustSize()
         if self.width() < needed_w:
             self.resize(needed_w, self.height())
+        # The doItemsLayout() timer started by setItemWidget() calls reads the
+        # viewport width when it fires -- which may be before the dialog layout
+        # has applied _lw's correct width.  Pre-sizing _lw here ensures the timer
+        # sees the right viewport width whenever it fires.
+        self._lw.resize(needed_w, self._lw.height())
         self.setMinimumSize(self.width(), self.height())
 
     def sync_like(self, path: str, liked: bool) -> None:

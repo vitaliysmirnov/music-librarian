@@ -36,12 +36,6 @@ def _dwm_set_titlebar_dark(hwnd: int, dark: bool) -> None:
             color = ctypes.c_uint(_DARK_CAPTION_COLOR if dark else _DWMWA_COLOR_DEFAULT)
             ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(color), ctypes.sizeof(color))
 
-        # SWP_FRAMECHANGED triggers WM_NCCALCSIZE which makes DWM recompose the
-        # non-client area with the attributes we just set.  This must run in a
-        # deferred (QTimer.singleShot) call so Qt's own style-change messages
-        # don't arrive after us and reset the caption colour.
-        _SWP = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020  # NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|FRAMECHANGED
-        ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, _SWP)
     except Exception:
         pass
 
@@ -90,6 +84,11 @@ def _apply_windows_titlebar_theme(dark: bool) -> None:
                 hwnd = w.internalWinId()
                 if hwnd:
                     _dwm_set_titlebar_dark(int(hwnd), dark)
+                # Repainting the client area causes DWM to recompose the entire
+                # window frame (client + non-client) with the new dark attribute.
+                # Without this, DWM reuses its cached composition buffer and the
+                # title bar stays the old colour until the next size change.
+                w.update()
     QTimer.singleShot(0, _apply_all)
 
 

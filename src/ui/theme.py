@@ -25,23 +25,13 @@ def _dwm_set_titlebar_dark(hwnd: int, dark: bool) -> None:
     """Apply dark or light title bar via DWM attributes."""
     import ctypes
     try:
+        mode = ctypes.c_int(1 if dark else 0)
+        r = ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(mode), ctypes.sizeof(mode))
+        if r != 0:
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(mode), ctypes.sizeof(mode))
         if _IS_WIN11:
-            # Windows 11: set caption background (attr 35) and text (attr 36) directly.
-            # DWMWA_USE_IMMERSIVE_DARK_MODE is intentionally omitted: when combined
-            # with CAPTION_COLOR it causes the active-window caption to revert to the
-            # system dark colour (~black), overriding our custom gray.  With only
-            # CAPTION_COLOR set, Windows auto-adjusts button icon colours based on
-            # caption luminance, so dark backgrounds get white icons automatically.
             color = ctypes.c_uint(_DARK_CAPTION_COLOR if dark else _DWMWA_COLOR_DEFAULT)
             ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(color), ctypes.sizeof(color))
-            text = ctypes.c_uint(0xFFFFFF if dark else _DWMWA_COLOR_DEFAULT)
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(text), ctypes.sizeof(text))
-        else:
-            # Windows 10: DWMWA_CAPTION_COLOR is unavailable; use immersive dark mode.
-            mode = ctypes.c_int(1 if dark else 0)
-            r = ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(mode), ctypes.sizeof(mode))
-            if r != 0:
-                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(mode), ctypes.sizeof(mode))
     except Exception:
         pass
 

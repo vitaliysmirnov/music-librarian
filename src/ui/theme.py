@@ -36,11 +36,10 @@ def _dwm_set_titlebar_dark(hwnd: int, dark: bool) -> None:
             color = ctypes.c_uint(_DARK_CAPTION_COLOR if dark else _DWMWA_COLOR_DEFAULT)
             ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(color), ctypes.sizeof(color))
 
-        # DwmSetWindowAttribute does not automatically repaint the non-client area
-        # at runtime.  SWP_FRAMECHANGED triggers WM_NCCALCSIZE which forces DWM
-        # to immediately redraw the title bar with the new attribute values.
-        _SWP = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020  # NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|FRAMECHANGED
-        ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, _SWP)
+        # WM_NCACTIVATE (0x0086, wParam=1) asks DWM to immediately repaint the
+        # non-client area using the attributes we just set.  More reliable than
+        # SetWindowPos(SWP_FRAMECHANGED) which only triggers WM_NCCALCSIZE.
+        ctypes.windll.user32.SendMessageW(hwnd, 0x0086, 1, 0)
     except Exception:
         pass
 
@@ -77,12 +76,19 @@ def _apply_windows_titlebar_theme(dark: bool) -> None:
         app.installEventFilter(_titlebar_filter)
     else:
         _titlebar_filter.set_dark(dark)  # type: ignore[attr-defined]
-    # Apply to all already-visible top-level windows (theme change at runtime).
-    for widget in app.topLevelWidgets():
-        if widget.isWindow():
-            hwnd = widget.internalWinId()
-            if hwnd:
-                _dwm_set_titlebar_dark(int(hwnd), dark)
+    # Defer the DWM calls to the next event-loop tick so that any Win32 messages
+    # posted by _force_qt_refresh (app.setStyle → SetWindowPos(SWP_FRAMECHANGED))
+    # are processed first — otherwise they can reset the non-client area after us.
+    def _apply_all() -> None:
+        a = QApplication.instance()
+        if a is None:
+            return
+        for w in a.topLevelWidgets():
+            if w.isWindow():
+                hwnd = w.internalWinId()
+                if hwnd:
+                    _dwm_set_titlebar_dark(int(hwnd), dark)
+    QTimer.singleShot(0, _apply_all)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────

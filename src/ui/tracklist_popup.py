@@ -328,6 +328,12 @@ class TracklistPopup(QDialog):
         self.adjustSize()
         if self.width() < needed_w:
             self.resize(needed_w, self.height())
+        # resize() queues a layout event; activate() flushes it synchronously so
+        # QListWidget gets its final width before show() is called.  doItemsLayout()
+        # then forces the view to set correct geometries on all item widgets, which
+        # triggers _ElidedLabel.resizeEvent() (and _update_text()) before first paint.
+        self.layout().activate()
+        self._lw.doItemsLayout()
         self.setMinimumSize(self.width(), self.height())
 
     def sync_like(self, path: str, liked: bool) -> None:

@@ -2,7 +2,7 @@ import json
 import unicodedata
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QRect, QEvent, QMimeData, QPoint, QSize, QUrl, QByteArray
+from PySide6.QtCore import Qt, Signal, QRect, QEvent, QMimeData, QPoint, QSize, QTimer, QUrl, QByteArray
 from PySide6.QtGui import QPainter, QPen, QColor, QPixmap, QDrag, QFont, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QAbstractScrollArea, QApplication,
@@ -762,6 +762,17 @@ class EditReleaseDialog(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         self.setFocus()
+        QTimer.singleShot(0, self._fix_item_geometry)
+
+    def _fix_item_geometry(self) -> None:
+        vp = self._lw.viewport()
+        w = vp.width()
+        if w <= 0:
+            return
+        for i in range(self._lw.count()):
+            widget = self._lw.itemWidget(self._lw.item(i))
+            if widget is not None:
+                widget.setGeometry(QRect(0, i * _ROW_H, w, _ROW_H))
 
     def _on_cover_changed(self, path: str):
         self._cover_source_path = path

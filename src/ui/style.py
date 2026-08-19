@@ -1,14 +1,10 @@
 """Shared visual constants for the iTunes-style UI."""
 
-import sys as _sys
-
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QApplication, QLabel, QSizePolicy, QStyle, QStyledItemDelegate, QToolTip,
 )
-
-_IS_WIN = _sys.platform == "win32"
 
 ROW_HEIGHT = 20
 
@@ -116,10 +112,10 @@ QHeaderView {
 }
 QHeaderView::section {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 """ + ("palette(mid), stop:1 palette(dark)" if _IS_WIN else "palette(button), stop:1 palette(mid)") + """);
+        stop:0 palette(button), stop:1 palette(mid));
     color: palette(buttonText);
     border: none;
-    border-right: 1px solid """ + ("palette(shadow)" if _IS_WIN else "palette(midlight)") + """;
+    border-right: 1px solid palette(midlight);
     border-bottom: 1px solid palette(shadow);
     padding: 1px 6px;
     font-size: 11px;
@@ -131,15 +127,6 @@ QHeaderView::up-arrow, QHeaderView::down-arrow {
     image: none;
 }
 """
-
-# Bottom panel bar: on Windows only, give it a visually distinct background so it
-# reads as a separate footer section rather than blending into the window surface.
-PANEL_BAR_STYLE = (
-    "background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-    " stop:0 palette(dark), stop:1 palette(mid));"
-    " border-top: 1px solid palette(shadow);"
-    if _IS_WIN else ""
-)
 
 SEARCH_STYLE = """
 QLineEdit {

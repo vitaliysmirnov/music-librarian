@@ -46,6 +46,9 @@ class SourcesTab(QWidget):
         layout.addWidget(self._table)
 
         bottom_bar = QWidget()
+        bottom_bar.setObjectName("_BottomBar")
+        bottom_bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bottom_bar.setStyleSheet("#_BottomBar { background: palette(window); border-top: 1px solid palette(mid); }")
         bb = QHBoxLayout(bottom_bar)
         bb.setContentsMargins(8, 4, 8, 4)
         bb.setSpacing(4)

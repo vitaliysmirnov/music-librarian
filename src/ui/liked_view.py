@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem, QTableView, QVBoxLayout, QWidget,
 )
 
-from src.ui.style import ElidedTooltipDelegate, ROW_HEIGHT, TABLE_STYLE
+from src.ui.style import ElidedTooltipDelegate, PANEL_BAR_STYLE, ROW_HEIGHT, TABLE_STYLE
 from src.utils import fmt_ms
 
 def _confirm_add_duplicates(parent, duplicates: list) -> bool:
@@ -293,6 +293,7 @@ class LikedTracksView(QWidget):
 
         # ── Bottom bar ────────────────────────────────────────────────────
         bb_widget = QWidget()
+        bb_widget.setStyleSheet(PANEL_BAR_STYLE)
         bb = QHBoxLayout(bb_widget)
         bb.setContentsMargins(8, 4, 8, 4)
         bb.setSpacing(4)

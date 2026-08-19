@@ -21,7 +21,7 @@ from src.ui.edit_release_dialog import EditReleaseDialog
 from src.ui.liked_view import LikedTracksView
 from src.ui.playlist_view import PlaylistView
 from src.ui.sidebar_panel import SidebarPanel
-from src.ui.style import ElidedTooltipDelegate, ROW_HEIGHT, TABLE_STYLE, SEARCH_STYLE
+from src.ui.style import ElidedTooltipDelegate, PANEL_BAR_STYLE, ROW_HEIGHT, TABLE_STYLE, SEARCH_STYLE
 
 # Column 0 is always the play button.
 COL_PLAY = 0
@@ -694,6 +694,7 @@ class _ReleasesView(QWidget):
             trash_sc.activated.connect(self._trash_release)
 
         bottom_bar = QWidget()
+        bottom_bar.setStyleSheet(PANEL_BAR_STYLE)
         bb = QHBoxLayout(bottom_bar)
         bb.setContentsMargins(8, 4, 8, 4)
         bb.setSpacing(4)

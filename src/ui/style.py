@@ -175,6 +175,39 @@ def build_table_style() -> str:
 
 TABLE_STYLE = build_table_style()
 
+
+_TRACKLIST_BASE = """
+QListWidget {
+    border: 1px solid palette(mid);
+    background: palette(base);
+    outline: none;
+}
+QListWidget::item { padding: 0px; }
+QListWidget::item:selected { background: #3875d7; color: white; }
+QListWidget::item:alternate { background: palette(alternateBase); }
+QListWidget::item:selected:alternate { background: #3875d7; }
+"""
+
+_TRACKLIST_WIN_DARK = """
+QListWidget {
+    border: 1px solid palette(mid);
+    background: #1e1e1e;
+    outline: none;
+}
+QListWidget::item { padding: 0px; }
+QListWidget::item:selected { background: #3875d7; color: white; }
+QListWidget::item:alternate { background: #252525; }
+QListWidget::item:selected:alternate { background: #3875d7; }
+"""
+
+
+def build_tracklist_style() -> str:
+    """Return QListWidget stylesheet for the release tracklist."""
+    if _IS_WIN and _is_dark_palette():
+        return _TRACKLIST_WIN_DARK
+    return _TRACKLIST_BASE
+
+
 SEARCH_STYLE = """
 QLineEdit {
     border: 1px solid palette(mid);

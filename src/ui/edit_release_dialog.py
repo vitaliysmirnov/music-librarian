@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QSizePolicy, QFileDialog, QWidget, QPushButton,
 )
 
+from src.ui.style import build_tracklist_style
+
 _ROW_H = 22
 
 from src.database.db import Database
@@ -575,17 +577,7 @@ class EditReleaseDialog(QDialog):
         self._lw.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustToContents)
         self._lw.setAlternatingRowColors(True)
         self._lw.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._lw.setStyleSheet("""
-            QListWidget {
-                border: 1px solid palette(mid);
-                background: palette(base);
-                outline: none;
-            }
-            QListWidget::item { padding: 0px; }
-            QListWidget::item:selected { background: #3875d7; color: white; }
-            QListWidget::item:alternate { background: palette(alternateBase); }
-            QListWidget::item:selected:alternate { background: #3875d7; }
-        """)
+        self._lw.setStyleSheet(build_tracklist_style())
 
         mono = QFont("Menlo")
         if not mono.exactMatch():

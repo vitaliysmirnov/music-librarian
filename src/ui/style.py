@@ -1,5 +1,7 @@
 """Shared visual constants for the iTunes-style UI."""
 
+import sys as _sys
+
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
@@ -7,6 +9,15 @@ from PySide6.QtWidgets import (
 )
 
 ROW_HEIGHT = 20
+_IS_WIN = _sys.platform == "win32"
+
+
+def _is_dark_palette() -> bool:
+    app = QApplication.instance()
+    if app is None:
+        return False
+    from PySide6.QtGui import QPalette
+    return app.palette().color(QPalette.ColorRole.Window).lightness() < 128
 
 
 class ElidedTooltipDelegate(QStyledItemDelegate):
@@ -86,7 +97,7 @@ class ElidedLabel(QLabel):
         return fm.elidedText(self._full_text, Qt.TextElideMode.ElideRight, max(0, self.width()))
 
 
-TABLE_STYLE = """
+_TABLE_BASE = """
 QTableView, QTableWidget {
     border: none;
     font-size: 12px;
@@ -110,6 +121,9 @@ QTableView::item:selected:!active, QTableWidget::item:selected:!active {
 QHeaderView {
     border: none;
 }
+"""
+
+_HEADER_SECTION_DEFAULT = """
 QHeaderView::section {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 palette(button), stop:1 palette(mid));
@@ -121,12 +135,45 @@ QHeaderView::section {
     font-size: 11px;
     font-weight: 500;
 }
+"""
+
+# On Windows with Fusion the palette-derived gradient goes dark→lighter (wrong
+# direction).  Hardcode stops that match the macOS dark look: lighter at top,
+# darker at bottom.
+_HEADER_SECTION_WIN_DARK = """
+QHeaderView::section {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #4c4c4c, stop:1 #2b2b2b);
+    color: #dcdcdc;
+    border: none;
+    border-right: 1px solid #3a3a3a;
+    border-bottom: 1px solid #1a1a1a;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-weight: 500;
+}
+"""
+
+_TABLE_ARROWS = """
 QHeaderView::up-arrow, QHeaderView::down-arrow {
     width: 0px;
     height: 0px;
     image: none;
 }
 """
+
+
+def build_table_style() -> str:
+    """Return TABLE_STYLE resolved for the current platform and palette."""
+    header = (
+        _HEADER_SECTION_WIN_DARK
+        if _IS_WIN and _is_dark_palette()
+        else _HEADER_SECTION_DEFAULT
+    )
+    return _TABLE_BASE + header + _TABLE_ARROWS
+
+
+TABLE_STYLE = build_table_style()
 
 SEARCH_STYLE = """
 QLineEdit {

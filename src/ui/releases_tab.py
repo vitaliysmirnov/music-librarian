@@ -21,7 +21,7 @@ from src.ui.edit_release_dialog import EditReleaseDialog
 from src.ui.liked_view import LikedTracksView
 from src.ui.playlist_view import PlaylistView
 from src.ui.sidebar_panel import SidebarPanel
-from src.ui.style import ElidedTooltipDelegate, ROW_HEIGHT, TABLE_STYLE, SEARCH_STYLE
+from src.ui.style import ElidedTooltipDelegate, ROW_HEIGHT, TABLE_STYLE, SEARCH_STYLE, build_table_style
 
 # Column 0 is always the play button.
 COL_PLAY = 0
@@ -644,7 +644,7 @@ class _ReleasesView(QWidget):
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setAlternatingRowColors(False)
         self._table.setShowGrid(False)
-        self._table.setStyleSheet(TABLE_STYLE)
+        self._table.setStyleSheet(build_table_style())
         self._table.doubleClicked.connect(self._on_double_click)
         self._table.setContextMenuPolicy(Qt.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_context_menu)

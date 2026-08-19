@@ -152,6 +152,21 @@ _TOOLTIP_STYLE_LIGHT = (
 )
 
 
+def _refresh_table_styles() -> None:
+    """Re-apply build_table_style() to all table views after a palette change."""
+    if platform.system() != "Windows":
+        return
+    from PySide6.QtWidgets import QTableView, QTableWidget
+    from src.ui.style import build_table_style
+    style = build_table_style()
+    app = QApplication.instance()
+    if app is None:
+        return
+    for w in app.allWidgets():
+        if isinstance(w, (QTableView, QTableWidget)):
+            w.setStyleSheet(style)
+
+
 def _apply_palette(theme: str, app: QApplication) -> None:
     app.setStyle("Fusion")
     is_dark: bool
@@ -168,6 +183,7 @@ def _apply_palette(theme: str, app: QApplication) -> None:
     # reset the application stylesheet.  Setting the QToolTip stylesheet afterwards
     # ensures it survives the style re-creation.
     _force_qt_refresh()
+    _refresh_table_styles()
     app.setStyleSheet(_TOOLTIP_STYLE_DARK if is_dark else _TOOLTIP_STYLE_LIGHT)
     _apply_windows_titlebar_theme(is_dark)
 

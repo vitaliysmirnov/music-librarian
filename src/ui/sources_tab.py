@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.scanner.scanner import scan_source
-from src.ui.style import ROW_HEIGHT, TABLE_STYLE
+from src.ui.style import ROW_HEIGHT, TABLE_STYLE, build_table_style
 from src.utils.logger import get_logger
 
 log = get_logger()
@@ -33,7 +33,7 @@ class SourcesTab(QWidget):
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setShowGrid(False)
         self._table.setAlternatingRowColors(True)
-        self._table.setStyleSheet(TABLE_STYLE)
+        self._table.setStyleSheet(build_table_style())
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.Stretch)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)

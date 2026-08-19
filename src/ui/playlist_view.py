@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem, QTableView, QVBoxLayout, QWidget,
 )
 
-from src.ui.style import ElidedTooltipDelegate, ROW_HEIGHT, TABLE_STYLE
+from src.ui.style import ElidedTooltipDelegate, ROW_HEIGHT, TABLE_STYLE, build_table_style
 from src.utils import fmt_ms
 from src.utils.audio import AUDIO_EXTENSIONS
 
@@ -361,7 +361,7 @@ class PlaylistView(QWidget):
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setAlternatingRowColors(False)
         self._table.setShowGrid(False)
-        self._table.setStyleSheet(TABLE_STYLE)
+        self._table.setStyleSheet(build_table_style())
         self._table.doubleClicked.connect(self._on_double_click)
         self._table.setContextMenuPolicy(Qt.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_context_menu)

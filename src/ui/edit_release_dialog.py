@@ -211,6 +211,7 @@ class EditReleaseDialog(QDialog):
         super().__init__(parent)
         if parent is not None:
             parent.installEventFilter(self)
+        QApplication.instance().installEventFilter(self)
         self.setWindowFlags(
             Qt.WindowType.Tool
             | Qt.WindowType.CustomizeWindowHint
@@ -370,9 +371,32 @@ class EditReleaseDialog(QDialog):
                     )
             self.playlist_track_added.emit(pid)
 
+    def closeEvent(self, event):
+        QApplication.instance().removeEventFilter(self)
+        super().closeEvent(event)
+
     def eventFilter(self, obj, event):
         if obj is self.parent() and event.type() == QEvent.Type.Close:
             self.close()
+
+        # Deselect tracklist when clicking any widget outside _lw.
+        if (event.type() == QEvent.Type.MouseButtonPress
+                and hasattr(self, "_lw")
+                and isinstance(obj, QWidget)):
+            w = obj
+            in_dialog = False
+            in_lw = False
+            while w is not None:
+                if w is self._lw:
+                    in_lw = True
+                if w is self:
+                    in_dialog = True
+                    break
+                w = w.parent() if callable(getattr(w, "parent", None)) else None
+            if in_dialog and not in_lw:
+                self._lw.clearSelection()
+                self._lw.clearFocus()
+
         if hasattr(self, "_lw") and obj is self._lw.viewport():
             t = event.type()
             if t == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:

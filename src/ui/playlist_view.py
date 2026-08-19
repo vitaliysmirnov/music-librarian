@@ -395,8 +395,9 @@ class PlaylistView(QWidget):
 
         # ── Bottom bar ────────────────────────────────────────────────────
         bb_widget = QWidget()
-        bb_widget.setAutoFillBackground(True)
-        bb_widget.setStyleSheet("background: palette(window); border-top: 1px solid palette(mid);")
+        bb_widget.setObjectName("_BottomBar")
+        bb_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bb_widget.setStyleSheet("#_BottomBar { background: palette(window); border-top: 1px solid palette(mid); }")
         bb = QHBoxLayout(bb_widget)
         bb.setContentsMargins(8, 4, 8, 4)
         bb.setSpacing(4)

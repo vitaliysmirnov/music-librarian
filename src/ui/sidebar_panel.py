@@ -180,11 +180,12 @@ class _NavButton(QPushButton):
         ty  = (h - cap) // 2 - (fm.ascent() - cap)
         # Qt does not propagate state-specific stylesheet font/colour changes
         # to self.font() / opt.palette reliably — apply them explicitly.
-        is_nav_checked = self.isChecked() and not bool(self.property("isPlaylist"))
+        is_playlist = bool(self.property("isPlaylist"))
         font = QFont(self.font())
-        font.setBold(is_nav_checked)
+        font.setBold(self.isChecked())          # bold for all checked buttons
         p.setFont(font)
-        p.setPen(QColor(255, 255, 255) if is_nav_checked
+        # nav checked → white on blue; playlist checked → normal text colour
+        p.setPen(QColor(255, 255, 255) if (self.isChecked() and not is_playlist)
                  else self.palette().color(QPalette.ColorRole.WindowText))
         p.drawText(QRect(x, ty, self.width() - x - 4, fm.height()),
                    Qt.AlignmentFlag.AlignLeft, self.text())

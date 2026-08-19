@@ -223,10 +223,19 @@ src/
 │   ├── sources_tab.py     Add/remove/scan source directories
 │   ├── settings_tab.py    App settings (scan mode, mask, theme, log)
 │   ├── sidebar_panel.py   Left-column navigation; scrollable playlist list
-│   │                      with drag-reorder, drop targets, and delete context menu
-│   ├── style.py           Shared QSS constants; ElidedTooltipDelegate —
-│   │                      character-level elision + tooltip for table cells
-│   └── theme.py           Light / dark / system theme switching
+│   │                      with drag-reorder, drop targets, and delete context menu;
+│   │                      _NavButton uses a custom paintEvent on Windows to centre
+│   │                      text on ascent+descent (excluding leading) so it aligns
+│   │                      with the icon; macOS falls through to super().paintEvent()
+│   ├── style.py           Shared QSS constants and platform helpers;
+│   │                      build_table_style() / build_tracklist_style() return
+│   │                      platform-aware stylesheets (hardcoded hex on Windows
+│   │                      dark to match macOS palette values);
+│   │                      ElidedTooltipDelegate — character-level elision +
+│   │                      tooltip for table cells
+│   └── theme.py           Light / dark / system theme switching;
+│                          _refresh_table_styles() re-applies build_table_style()
+│                          on all live table views when the palette changes
 ├── utils/
 │   ├── __init__.py        Shared helpers: fmt_ms(), open_path()
 │   ├── audio.py           AUDIO_EXTENSIONS + audio_paths(), read_track_tags(),
@@ -321,6 +330,18 @@ macOS HFS+/APFS delivers paths in NFD form via watchdog while Python's `os.listd
 The SQLite database is opened with WAL mode and `check_same_thread=False`; each `conn()` call creates a new connection from the pool, so the main thread can read (e.g. to refresh the table) concurrently with the scan thread writing.
 
 Track tag reads are skipped via `_sync_tracks_if_changed()`: it compares the folder's current `st_mtime` against the stored `tracks_mtime` column, and only calls `_scan_folder_tracks()` (which reads mutagen tags) when the timestamp differs. The first scan after a schema migration reads everything; subsequent scans only call `os.stat()` per folder.
+
+### Windows dark-mode rendering
+
+Windows Fusion dark theme exposes several palette/metric differences from macOS that require explicit overrides.
+
+**Table and list backgrounds** — `palette(base)` and `palette(alternateBase)` are lighter on Fusion than on macOS. `build_table_style()` and `build_tracklist_style()` in `style.py` substitute hardcoded hex colours (`#1e1e1e` / `#252525` for lists; gradient `#4c4c4c → #2b2b2b` for the header section) when `_IS_WIN and _is_dark_palette()` is true.
+
+**Column header gradient** — Fusion's `palette(button)` is `#3c3c3c` and `palette(mid)` is `#505050`, producing a light-to-dark gradient that is the opposite of macOS. The override reverses this with a hardcoded two-stop gradient going darker top → lighter bottom in `_HEADER_SECTION_WIN_DARK`.
+
+**Footer bar background** — Fusion does not auto-fill a plain `QWidget` child with `palette(window)`. All bottom-bar panels use `setObjectName("_BottomBar")` + `setAttribute(WA_StyledBackground, True)` + a scoped `#_BottomBar { background: palette(window); border-top: 1px solid palette(mid); }` stylesheet; a generic `QWidget { ... }` selector would inherit into child buttons.
+
+**Sidebar icon/text vertical alignment** — `QFontMetrics.height()` includes leading which is larger on Fusion, causing Qt's default `CE_PushButtonLabel` to place the visual text centre below the icon centre. `_NavButton.paintEvent` on Windows centres text using `ascent + descent` (without leading): `ty = (h − (ascent + descent)) // 2`. On macOS `super().paintEvent()` is called instead; `setIcon()` is kept up-to-date via `set_current()` for that path.
 
 ### Queue persistence
 

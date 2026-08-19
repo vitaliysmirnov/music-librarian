@@ -187,17 +187,17 @@ class _NavButton(QPushButton):
             p.drawPixmap(x, iy, _ICON_PX, _ICON_PX, pix)
             x += _ICON_PX + 6
 
-        fm = self.fontMetrics()
-        # Align on cap-height midline so text optical centre matches icon centre.
-        cap = fm.capHeight() if fm.capHeight() > 0 else fm.ascent()
-        ty  = (h - cap) // 2 - (fm.ascent() - cap)
         font = QFont(self.font())
         font.setBold(self.isChecked())
         p.setFont(font)
+        fm = p.fontMetrics()  # metrics for the actual drawn font (may differ when bold)
+        # Place baseline so cap-height centre aligns with icon centre (h // 2).
+        # baseline = h/2 + cap/2  →  cap_centre = baseline - cap + cap/2 = h/2  ✓
+        cap = fm.capHeight() if fm.capHeight() > 0 else (fm.ascent() * 2 // 3)
+        baseline_y = (h + cap) // 2
         p.setPen(QColor(255, 255, 255) if (self.isChecked() and not is_playlist)
                  else self.palette().color(QPalette.ColorRole.WindowText))
-        p.drawText(QRect(x, ty, self.width() - x - 4, fm.height()),
-                   Qt.AlignmentFlag.AlignLeft, self.text())
+        p.drawText(x, baseline_y, self.text())
 
 
 def _icon_color_off() -> QColor:

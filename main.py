@@ -57,12 +57,13 @@ def main():
     app.setOrganizationName("music-librarian")
 
     # macOS bundle: dock icon comes from .icns in the bundle automatically.
-    # Windows frozen build: assets/ is extracted next to the EXE; use .ico so
-    # Qt picks up all the embedded sizes (16, 32, 48, 256…).
+    # Windows frozen build: PyInstaller 6+ extracts datas into _internal/
+    # next to the EXE; sys._MEIPASS points there in both onedir and onefile
+    # modes.  Use .ico so Qt picks up all embedded sizes (16, 32, 48, 256…).
     # Dev / source run: load icon.png from the source tree.
     if not (sys.platform == "darwin" and getattr(sys, "frozen", False)):
         if getattr(sys, "frozen", False):
-            icon_path = Path(sys.executable).parent / "assets" / "icon.ico"
+            icon_path = Path(sys._MEIPASS) / "assets" / "icon.ico"
         else:
             icon_path = Path(__file__).parent / "assets" / "icon.png"
         if icon_path.exists():

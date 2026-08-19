@@ -1,4 +1,5 @@
 import json
+import sys as _sys
 
 from PySide6.QtCore import QEvent, Qt, QByteArray, QMimeData, QPoint, QPointF, QRect, QRectF, QSize, Signal
 from PySide6.QtGui import QBrush, QColor, QDrag, QFont, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap
@@ -6,6 +7,7 @@ from PySide6.QtWidgets import QApplication, QFrame, QGraphicsOpacityEffect, QHBo
 
 _ICON_PX      = 14   # logical icon size (points)
 _REORDER_MIME = "application/x-sidebar-playlist-id"
+_IS_WIN       = _sys.platform == "win32"
 
 _NAV_ITEMS = [
     (None,       "Library",  "section"),
@@ -152,18 +154,30 @@ class _NavButton(QPushButton):
         super().__init__(label, parent)
         self._pix_off = pix_off
         self._pix_on  = pix_on
+        # macOS uses super().paintEvent() which needs setIcon() to draw the icon.
+        if not _IS_WIN:
+            self.setIcon(QIcon(pix_off))
+            self.setIconSize(QSize(_ICON_PX, _ICON_PX))
 
     def paintEvent(self, event):
+        # On macOS Qt's built-in CE_PushButtonLabel centres icon + text
+        # correctly with the system font metrics — no adjustment needed.
+        if not _IS_WIN:
+            super().paintEvent(event)
+            return
+
+        # Windows: Fusion's leading is larger than macOS, causing text to
+        # sit visually lower than the icon.  Draw both manually so they share
+        # the exact same (h - size) // 2 vertical midpoint.
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         opt = QStyleOptionButton()
         self.initStyleOption(opt)
-        # Draw background / bevel only — we paint icon + text ourselves.
         self.style().drawControl(QStyle.ControlElement.CE_PushButtonBevel, opt, p, self)
 
         h = self.height()
-        x = 8  # matches stylesheet left padding
+        x = 8
 
         is_playlist = bool(self.property("isPlaylist"))
         pix = (self._pix_on if (self.isChecked() and not is_playlist)
@@ -171,20 +185,15 @@ class _NavButton(QPushButton):
         if pix and not pix.isNull():
             iy = (h - _ICON_PX) // 2
             p.drawPixmap(x, iy, _ICON_PX, _ICON_PX, pix)
-            x += _ICON_PX + 6  # icon width + gap
+            x += _ICON_PX + 6
 
-        # Centre text using cap-height so it shares the same optical midline
-        # as the icon (cap-height ≈ visual text height, excluding descenders).
         fm = self.fontMetrics()
+        # Align on cap-height midline so text optical centre matches icon centre.
         cap = fm.capHeight() if fm.capHeight() > 0 else fm.ascent()
         ty  = (h - cap) // 2 - (fm.ascent() - cap)
-        # Qt does not propagate state-specific stylesheet font/colour changes
-        # to self.font() / opt.palette reliably — apply them explicitly.
-        is_playlist = bool(self.property("isPlaylist"))
         font = QFont(self.font())
-        font.setBold(self.isChecked())          # bold for all checked buttons
+        font.setBold(self.isChecked())
         p.setFont(font)
-        # nav checked → white on blue; playlist checked → normal text colour
         p.setPen(QColor(255, 255, 255) if (self.isChecked() and not is_playlist)
                  else self.palette().color(QPalette.ColorRole.WindowText))
         p.drawText(QRect(x, ty, self.width() - x - 4, fm.height()),
@@ -533,7 +542,10 @@ class SidebarPanel(QWidget):
         # Deselect previous
         if self._current:
             if self._current in self._buttons:
-                self._buttons[self._current].setChecked(False)
+                btn = self._buttons[self._current]
+                btn.setChecked(False)
+                if not _IS_WIN and self._current in self._pix_off:
+                    btn.setIcon(QIcon(self._pix_off[self._current]))
             elif self._current.startswith("playlist:"):
                 pid = int(self._current.split(":")[1])
                 if pid in self._playlist_buttons:
@@ -541,9 +553,11 @@ class SidebarPanel(QWidget):
 
         self._current = key
 
-        # Select new — paintEvent picks the correct icon based on isChecked()
         if key in self._buttons:
-            self._buttons[key].setChecked(True)
+            btn = self._buttons[key]
+            btn.setChecked(True)
+            if not _IS_WIN and key in self._pix_on:
+                btn.setIcon(QIcon(self._pix_on[key]))
         elif key.startswith("playlist:"):
             pid = int(key.split(":")[1])
             if pid in self._playlist_buttons:

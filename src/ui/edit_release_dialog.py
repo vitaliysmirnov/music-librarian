@@ -607,7 +607,7 @@ class EditReleaseDialog(QDialog):
             rl.setContentsMargins(4, 0, 2, 0)
             rl.setSpacing(3)
 
-            _lbl_style = "background: transparent; border: none; padding: 0;"
+            _lbl_style = "border: none; padding: 0;"
 
             num_lbl = QLabel(f"{i:>2}")
             num_lbl.setFont(mono)
@@ -632,9 +632,10 @@ class EditReleaseDialog(QDialog):
             like_btn = QPushButton()
             like_btn.setCheckable(True)
             like_btn.setFixedSize(20, 20)
+            like_btn.setFlat(True)
             like_btn.setStyleSheet("""
                 QPushButton {
-                    border: none; background: transparent;
+                    border: none;
                     font-size: 13px; padding: 0; color: palette(placeholderText);
                 }
                 QPushButton:checked { color: #e0405a; }

@@ -799,7 +799,6 @@ class MainWindow(QMainWindow):
         worker.progress.connect(self._on_scan_progress)
         worker.finished.connect(self._on_scan_finished)
         worker.finished.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._on_scan_thread_done)
         self._scan_thread = thread

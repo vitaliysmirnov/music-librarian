@@ -191,13 +191,8 @@ class _NavButton(QPushButton):
         font.setBold(self.isChecked())
         p.setFont(font)
         fm = p.fontMetrics()
-        _sys.stderr.write(
-            f"[sidebar] WIN paintEvent label={self.text()!r} "
-            f"h={h} ascent={fm.ascent()} descent={fm.descent()} "
-            f"leading={fm.leading()} height={fm.height()} "
-            f"capHeight={fm.capHeight()}\n"
-        )
-        # Exclude leading so Windows extra leading does not push text below icon.
+        # Exclude leading from centering: Windows Fusion adds extra leading that
+        # would push the visual text centre below the icon centre.
         text_h = fm.ascent() + fm.descent()
         ty = (h - text_h) // 2
         p.setPen(QColor(255, 255, 255) if (self.isChecked() and not is_playlist)

@@ -694,6 +694,8 @@ class _ReleasesView(QWidget):
             trash_sc.activated.connect(self._trash_release)
 
         bottom_bar = QWidget()
+        bottom_bar.setAutoFillBackground(True)
+        bottom_bar.setStyleSheet("background: palette(window); border-top: 1px solid palette(mid);")
         bb = QHBoxLayout(bottom_bar)
         bb.setContentsMargins(8, 4, 8, 4)
         bb.setSpacing(4)

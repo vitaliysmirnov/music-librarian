@@ -164,10 +164,10 @@ class _LikeDelegate(QStyledItemDelegate):
         painter.restore()
 
     def editorEvent(self, event, model, option, index):
-        if (index.column() == self._like_col
-                and event.type() == QEvent.Type.MouseButtonRelease):
-            if self._toggle_cb:
+        if index.column() == self._like_col:
+            if event.type() == QEvent.Type.MouseButtonRelease and self._toggle_cb:
                 self._toggle_cb(index)
+            # Consume press too so the default handler doesn't select the row.
             return True
         return super().editorEvent(event, model, option, index)
 

@@ -190,14 +190,20 @@ class _NavButton(QPushButton):
         font = QFont(self.font())
         font.setBold(self.isChecked())
         p.setFont(font)
-        fm = p.fontMetrics()  # metrics for the actual drawn font (may differ when bold)
-        # Place baseline so cap-height centre aligns with icon centre (h // 2).
-        # baseline = h/2 + cap/2  →  cap_centre = baseline - cap + cap/2 = h/2  ✓
-        cap = fm.capHeight() if fm.capHeight() > 0 else (fm.ascent() * 2 // 3)
-        baseline_y = (h + cap) // 2
+        fm = p.fontMetrics()
+        _sys.stderr.write(
+            f"[sidebar] WIN paintEvent label={self.text()!r} "
+            f"h={h} ascent={fm.ascent()} descent={fm.descent()} "
+            f"leading={fm.leading()} height={fm.height()} "
+            f"capHeight={fm.capHeight()}\n"
+        )
+        # Exclude leading so Windows extra leading does not push text below icon.
+        text_h = fm.ascent() + fm.descent()
+        ty = (h - text_h) // 2
         p.setPen(QColor(255, 255, 255) if (self.isChecked() and not is_playlist)
                  else self.palette().color(QPalette.ColorRole.WindowText))
-        p.drawText(x, baseline_y, self.text())
+        p.drawText(QRect(x, ty, self.width() - x - 4, text_h),
+                   Qt.AlignmentFlag.AlignLeft, self.text())
 
 
 def _icon_color_off() -> QColor:

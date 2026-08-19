@@ -1,8 +1,8 @@
 import json
 
-from PySide6.QtCore import QEvent, Qt, QByteArray, QMimeData, QPoint, QPointF, QRectF, QSize, Signal
-from PySide6.QtGui import QBrush, QColor, QDrag, QIcon, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget, QWidgetAction
+from PySide6.QtCore import QEvent, Qt, QByteArray, QMimeData, QPoint, QPointF, QRect, QRectF, QSize, Signal
+from PySide6.QtGui import QBrush, QColor, QDrag, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap
+from PySide6.QtWidgets import QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QSizePolicy, QStyle, QStyleOptionButton, QVBoxLayout, QWidget, QWidgetAction
 
 _ICON_PX      = 14   # logical icon size (points)
 _REORDER_MIME = "application/x-sidebar-playlist-id"
@@ -139,6 +139,53 @@ _ICON_DRAW = {
 }
 
 
+class _NavButton(QPushButton):
+    """QPushButton that draws icon and text with precise shared vertical center.
+
+    Qt's built-in CE_PushButtonLabel positions text by centering fm.height()
+    (ascent + descent + leading).  On Windows the leading is larger than on
+    macOS, so the *visual* text center ends up below the icon center.  We draw
+    both manually, anchoring each element to the same (h - size) // 2 midpoint.
+    """
+
+    def __init__(self, label: str, pix_off: QPixmap, pix_on: QPixmap, parent=None):
+        super().__init__(label, parent)
+        self._pix_off = pix_off
+        self._pix_on  = pix_on
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        opt = QStyleOptionButton()
+        self.initStyleOption(opt)
+        # Draw background / bevel only — we paint icon + text ourselves.
+        self.style().drawControl(QStyle.ControlElement.CE_PushButtonBevel, opt, p, self)
+
+        h = self.height()
+        x = 8  # matches stylesheet left padding
+
+        is_playlist = bool(self.property("isPlaylist"))
+        pix = (self._pix_on if (self.isChecked() and not is_playlist)
+               else self._pix_off)
+        if pix and not pix.isNull():
+            iy = (h - _ICON_PX) // 2
+            p.drawPixmap(x, iy, _ICON_PX, _ICON_PX, pix)
+            x += _ICON_PX + 6  # icon width + gap
+
+        # Centre text using cap-height so it shares the same optical midline
+        # as the icon (cap-height ≈ visual text height, excluding descenders).
+        fm = self.fontMetrics()
+        cap = fm.capHeight() if fm.capHeight() > 0 else fm.ascent()
+        ty  = (h - cap) // 2 - (fm.ascent() - cap)
+        p.setFont(self.font())
+        # opt.palette reflects the state-specific colour from the stylesheet
+        # (e.g. white when :checked, normal windowText otherwise).
+        p.setPen(opt.palette.color(QPalette.ColorRole.ButtonText))
+        p.drawText(QRect(x, ty, self.width() - x - 4, fm.height()),
+                   Qt.AlignmentFlag.AlignLeft, self.text())
+
+
 def _icon_color_off() -> QColor:
     is_dark = QApplication.palette().window().color().lightness() < 128
     return QColor(185, 185, 193) if is_dark else QColor(105, 105, 115)
@@ -175,14 +222,14 @@ class _DestructiveAction(QWidgetAction):
 
 # ── Playlist button with drop support ─────────────────────────────────────────
 
-class _PlaylistButton(QPushButton):
+class _PlaylistButton(_NavButton):
     """Playlist nav button that also accepts URL drops to add tracks."""
     tracks_dropped   = Signal(int, list, list)  # playlist_id, list[QUrl], cue_meta
     rename_requested = Signal(int, str)         # playlist_id, current_name
     delete_requested = Signal(int)              # playlist_id
 
-    def __init__(self, playlist_id: int, name: str, parent=None):
-        super().__init__(name, parent)
+    def __init__(self, playlist_id: int, name: str, pix_off: QPixmap, parent=None):
+        super().__init__(name, pix_off, pix_off, parent)  # same pix in both states
         self._playlist_id  = playlist_id
         self._drag_start: QPoint | None = None
         self.setAcceptDrops(True)
@@ -400,12 +447,9 @@ class SidebarPanel(QWidget):
                 sec.setGraphicsEffect(fx)
                 layout.addWidget(sec)
             else:
-                btn = QPushButton(label)
+                btn = _NavButton(label, self._pix_off[key], self._pix_on[key])
                 btn.setFlat(True)
                 btn.setCheckable(True)
-                if key in self._pix_off:
-                    btn.setIcon(QIcon(self._pix_off[key]))
-                    btn.setIconSize(QSize(_ICON_PX, _ICON_PX))
                 btn.clicked.connect(lambda _c, k=key: self._on_click(k))
                 layout.addWidget(btn)
                 self._buttons[key] = btn
@@ -460,11 +504,9 @@ class SidebarPanel(QWidget):
         for pl in playlists:
             pid  = pl["id"]
             name = pl["name"]
-            btn  = _PlaylistButton(pid, name)
+            btn  = _PlaylistButton(pid, name, self._pix_off["playlist"])
             btn.setFlat(True)
             btn.setCheckable(True)
-            btn.setIcon(QIcon(self._pix_off["playlist"]))
-            btn.setIconSize(QSize(_ICON_PX, _ICON_PX))
             btn.clicked.connect(lambda _c, k=f"playlist:{pid}": self._on_click(k))
             btn.tracks_dropped.connect(lambda pid_, urls, cue: self.tracks_dropped_on_playlist.emit(pid_, urls, cue))
             btn.rename_requested.connect(self.rename_playlist_requested)
@@ -486,27 +528,18 @@ class SidebarPanel(QWidget):
         # Deselect previous
         if self._current:
             if self._current in self._buttons:
-                btn = self._buttons[self._current]
-                btn.setChecked(False)
-                icon_key = self._current
-                if icon_key in self._pix_off:
-                    btn.setIcon(QIcon(self._pix_off[icon_key]))
+                self._buttons[self._current].setChecked(False)
             elif self._current.startswith("playlist:"):
                 pid = int(self._current.split(":")[1])
                 if pid in self._playlist_buttons:
                     self._playlist_buttons[pid].setChecked(False)
-                    self._playlist_buttons[pid].setIcon(QIcon(self._pix_off["playlist"]))
 
         self._current = key
 
-        # Select new
+        # Select new — paintEvent picks the correct icon based on isChecked()
         if key in self._buttons:
-            btn = self._buttons[key]
-            btn.setChecked(True)
-            if key in self._pix_on:
-                btn.setIcon(QIcon(self._pix_on[key]))
+            self._buttons[key].setChecked(True)
         elif key.startswith("playlist:"):
             pid = int(key.split(":")[1])
             if pid in self._playlist_buttons:
-                btn = self._playlist_buttons[pid]
-                btn.setChecked(True)
+                self._playlist_buttons[pid].setChecked(True)

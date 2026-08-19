@@ -1,7 +1,7 @@
 import json
 
 from PySide6.QtCore import QEvent, Qt, QByteArray, QMimeData, QPoint, QPointF, QRect, QRectF, QSize, Signal
-from PySide6.QtGui import QBrush, QColor, QDrag, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap
+from PySide6.QtGui import QBrush, QColor, QDrag, QFont, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QSizePolicy, QStyle, QStyleOptionButton, QVBoxLayout, QWidget, QWidgetAction
 
 _ICON_PX      = 14   # logical icon size (points)

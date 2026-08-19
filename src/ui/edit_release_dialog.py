@@ -211,7 +211,6 @@ class EditReleaseDialog(QDialog):
         super().__init__(parent)
         if parent is not None:
             parent.installEventFilter(self)
-        QApplication.instance().installEventFilter(self)
         self.setWindowFlags(
             Qt.WindowType.Tool
             | Qt.WindowType.CustomizeWindowHint
@@ -372,30 +371,39 @@ class EditReleaseDialog(QDialog):
             self.playlist_track_added.emit(pid)
 
     def closeEvent(self, event):
-        QApplication.instance().removeEventFilter(self)
+        try:
+            QApplication.instance().focusChanged.disconnect(self._on_focus_changed)
+        except Exception:
+            pass
         super().closeEvent(event)
+
+    def mousePressEvent(self, event):
+        # Clicks on the dialog background (not on any child widget).
+        if hasattr(self, "_lw"):
+            self._lw.clearSelection()
+            self._lw.clearFocus()
+        super().mousePressEvent(event)
+
+    def _on_focus_changed(self, _old, new_widget):
+        """Clear tracklist selection when focus moves to a widget outside _lw."""
+        if not hasattr(self, "_lw") or new_widget is None:
+            return
+        w = new_widget
+        while w is not None:
+            if w is self._lw:
+                return  # focus stayed inside the list — keep selection
+            w = w.parent() if isinstance(w, QWidget) else None
+        w = new_widget
+        while w is not None:
+            if w is self:
+                self._lw.clearSelection()
+                self._lw.clearFocus()
+                return
+            w = w.parent() if isinstance(w, QWidget) else None
 
     def eventFilter(self, obj, event):
         if obj is self.parent() and event.type() == QEvent.Type.Close:
             self.close()
-
-        # Deselect tracklist when clicking any widget outside _lw.
-        if (event.type() == QEvent.Type.MouseButtonPress
-                and hasattr(self, "_lw")
-                and isinstance(obj, QWidget)):
-            w = obj
-            in_dialog = False
-            in_lw = False
-            while w is not None:
-                if w is self._lw:
-                    in_lw = True
-                if w is self:
-                    in_dialog = True
-                    break
-                w = w.parent() if callable(getattr(w, "parent", None)) else None
-            if in_dialog and not in_lw:
-                self._lw.clearSelection()
-                self._lw.clearFocus()
 
         if hasattr(self, "_lw") and obj is self._lw.viewport():
             t = event.type()
@@ -703,6 +711,7 @@ class EditReleaseDialog(QDialog):
         QShortcut(QKeySequence.StandardKey.SelectAll, self._lw).activated.connect(
             self._lw.selectAll
         )
+        QApplication.instance().focusChanged.connect(self._on_focus_changed)
 
         # ── Tracklist column headers ───────────────────────────────────────
         # Left: 1px border + 4px item margin = 5; Right: 1px border + 2px item margin = 3

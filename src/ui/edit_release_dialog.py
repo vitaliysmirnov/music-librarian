@@ -602,7 +602,7 @@ class EditReleaseDialog(QDialog):
 
             row_w = QWidget()
             row_w.setFixedHeight(_ROW_H)
-            row_w.setStyleSheet("background: transparent;")
+            row_w.setAutoFillBackground(False)
             rl = QHBoxLayout(row_w)
             rl.setContentsMargins(4, 0, 2, 0)
             rl.setSpacing(3)

@@ -4,6 +4,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# Icon canvas size in logical points. Scaled from the original 30-pt design.
+_TRAY_ICON_PT = 22
+
 from PySide6.QtCore import Qt, QTimer, QEvent, QObject, Signal, QRectF, QPointF, QThread
 from PySide6.QtGui import QIcon, QAction, QKeySequence, QPixmap, QPainter, QColor, QPen, QBrush
 from PySide6.QtWidgets import (
@@ -80,13 +83,12 @@ def _apply_tray_template() -> None:
     safe way to iterate it without touching raw C pointers.
     """
     try:
-        from AppKit import NSStatusBar, NSMakeSize  # pyobjc-framework-Cocoa
+        from AppKit import NSStatusBar  # pyobjc-framework-Cocoa
         bar = NSStatusBar.systemStatusBar()
         ptr_array = bar.valueForKey_("_statusItems")
         if ptr_array is None:
             return
-        items = ptr_array.allObjects()
-        for item in items:
+        for item in ptr_array.allObjects():
             try:
                 btn = item.button()
                 if btn is None:
@@ -94,9 +96,13 @@ def _apply_tray_template() -> None:
                 img = btn.image()
                 if img is None:
                     continue
-                img.setSize_(NSMakeSize(30, 30))
-                if not img.isTemplate():
-                    img.setTemplate_(True)
+                img.setTemplate_(True)
+                # Qt sets NSSquareStatusItemLength (-2) by default, which on
+                # some Macs equals a bar height wider than adjacent system
+                # icons. Use a fixed 22 pt so the pressed highlight matches.
+                # Do NOT call img.setSize_() here — changing the NSImage size
+                # triggers an async AppKit layout that resets the length.
+                item.setLength_(22)
             except Exception:
                 pass
     except Exception:
@@ -569,10 +575,10 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _make_tray_icon() -> QIcon:
         """Draw vinyl+magnifier tray icon. Black on transparent = macOS template image."""
-        # Render at the screen's device pixel ratio so the icon is crisp on Retina.
+        SIZE = _TRAY_ICON_PT
         app = QApplication.instance()
         dpr = app.devicePixelRatio() if app else 2.0
-        phys = round(30 * dpr)
+        phys = round(SIZE * dpr)
         pix = QPixmap(phys, phys)
         pix.setDevicePixelRatio(dpr)
         pix.fill(Qt.GlobalColor.transparent)
@@ -585,27 +591,32 @@ class MainWindow(QMainWindow):
         W  = QColor(255, 255, 255, 255)
         Wg = QColor(255, 255, 255, 110)  # semi-transparent for groove rings
 
+        # Scale all coordinates from the original 30-pt design space.
+        s = SIZE / 30.0
+
         # Vinyl record (center-left)
-        vx, vy, vr = 13.0, 17.0, 10.2
-        p.setPen(QPen(W, 1.7))
+        vx, vy, vr = 13.0 * s, 17.0 * s, 10.2 * s
+        p.setPen(QPen(W, 1.7 * s))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(QRectF(vx - vr, vy - vr, vr * 2, vr * 2))
-        p.setPen(QPen(Wg, 1.1))
-        for gr in (7.9, 5.4):
+        p.setPen(QPen(Wg, 1.1 * s))
+        for gr in (7.9 * s, 5.4 * s):
             p.drawEllipse(QRectF(vx - gr, vy - gr, gr * 2, gr * 2))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(W))
-        p.drawEllipse(QRectF(vx - 3.0, vy - 3.0, 6.0, 6.0))
+        hr = 3.0 * s
+        p.drawEllipse(QRectF(vx - hr, vy - hr, hr * 2, hr * 2))
 
         # Magnifying glass (upper-right, overlays vinyl)
-        mx, my, mr = 22.6, 8.2, 4.7
-        p.setPen(QPen(W, 1.8))
+        mx, my, mr = 22.6 * s, 8.2 * s, 4.7 * s
+        p.setPen(QPen(W, 1.8 * s))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(QRectF(mx - mr, my - mr, mr * 2, mr * 2))
-        hpen = QPen(W, 2.4)
+        hpen = QPen(W, 2.4 * s)
         hpen.setCapStyle(Qt.PenCapStyle.RoundCap)
         p.setPen(hpen)
-        p.drawLine(QPointF(mx + mr * 0.707, my + mr * 0.707), QPointF(28.3, 14.3))
+        p.drawLine(QPointF(mx + mr * 0.707, my + mr * 0.707),
+                   QPointF(28.3 * s, 14.3 * s))
 
         p.end()
         return QIcon(pix)

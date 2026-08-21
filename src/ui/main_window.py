@@ -849,6 +849,21 @@ class MainWindow(QMainWindow):
         self._scan_thread = None
         self._scan_worker = None
 
+    def nativeEvent(self, event_type, message):
+        if event_type == b"windows_generic_MSG":
+            import ctypes.wintypes
+            _WM_POWERBROADCAST    = 0x0218
+            _PBT_APMSUSPEND       = 0x0004
+            _PBT_APMRESUMESUSPEND = 0x0007
+            _PBT_APMRESUMEAUTO    = 0x0012
+            msg = ctypes.wintypes.MSG.from_address(int(message))
+            if msg.message == _WM_POWERBROADCAST:
+                if msg.wParam == _PBT_APMSUSPEND:
+                    self._on_machine_sleep()
+                elif msg.wParam in (_PBT_APMRESUMESUSPEND, _PBT_APMRESUMEAUTO):
+                    self._on_machine_wake()
+        return super().nativeEvent(event_type, message)
+
     def _register_sleep_wake(self) -> None:
         if platform.system() != "Darwin":
             return

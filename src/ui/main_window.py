@@ -159,6 +159,8 @@ class MainWindow(QMainWindow):
         self._scan_worker: _ScanWorker | None = None
         self._last_scan_ended_at: float = 0.0
         self._scan_tray_action: QAction | None = None
+        self._machine_sleeping = False
+        self._sleep_observers: list = []
 
         self._fs_signal = _FsChangeSignal()
         self._fs_signal.triggered.connect(self._on_fs_change)
@@ -186,6 +188,7 @@ class MainWindow(QMainWindow):
         self._check_drives()
         self._drive_timer.start()
         self._drive_monitor.start()
+        self._register_sleep_wake()
 
         if self._data_dir:
             self._player_engine.restore_queue_state(self._data_dir / "queue_state.json")
@@ -846,7 +849,38 @@ class MainWindow(QMainWindow):
         self._scan_thread = None
         self._scan_worker = None
 
+    def _register_sleep_wake(self) -> None:
+        if platform.system() != "Darwin":
+            return
+        try:
+            from AppKit import NSWorkspace
+            center = NSWorkspace.sharedWorkspace().notificationCenter()
+            self._sleep_observers = [
+                center.addObserverForName_object_queue_usingBlock_(
+                    "NSWorkspaceWillSleepNotification", None, None,
+                    lambda _n: self._on_machine_sleep(),
+                ),
+                center.addObserverForName_object_queue_usingBlock_(
+                    "NSWorkspaceDidWakeNotification", None, None,
+                    lambda _n: self._on_machine_wake(),
+                ),
+            ]
+        except Exception:
+            pass
+
+    def _on_machine_sleep(self) -> None:
+        self._machine_sleeping = True
+        log.info("System going to sleep — auto-scan suspended")
+
+    def _on_machine_wake(self) -> None:
+        self._machine_sleeping = False
+        log.info("System woke — auto-scan resumed")
+        if self._auto_timer.isActive():
+            self._auto_scan()
+
     def _auto_scan(self):
+        if self._machine_sleeping:
+            return
         if self._scan_thread and self._scan_thread.isRunning():
             return
         if self._last_scan_ended_at:
@@ -965,4 +999,12 @@ class MainWindow(QMainWindow):
         self._check_drives()
         self._stop_watcher()
         self._drive_monitor.stop()
+        if self._sleep_observers and platform.system() == "Darwin":
+            try:
+                from AppKit import NSWorkspace
+                center = NSWorkspace.sharedWorkspace().notificationCenter()
+                for obs in self._sleep_observers:
+                    center.removeObserver_(obs)
+            except Exception:
+                pass
         QApplication.quit()
